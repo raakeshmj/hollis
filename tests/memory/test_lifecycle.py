@@ -318,3 +318,18 @@ async def test_scope_capacity_is_enforced(memory_store: MemoryStore, clock: Cloc
     full = await manager.remember(user_fact(SCOPE, "three"), ALICE)
     assert full.action is WriteAction.REJECTED
     assert "maximum" in full.reason
+
+
+async def test_registered_secrets_are_refused_even_without_pattern_checks(
+    memory_store: MemoryStore, clock: Clock
+) -> None:
+    secret = "opaque-registered-value-0123456789"
+    manager = MemoryManager(
+        memory_store,
+        policy=MemoryPolicy(reject_credential_patterns=False),
+        redactor=Redactor([secret]),
+        clock=clock,
+    )
+    outcome = await manager.remember(user_fact(SCOPE, f"remember {secret}"), ALICE)
+    assert outcome.action is WriteAction.REJECTED
+    assert "registered credential" in outcome.reason
