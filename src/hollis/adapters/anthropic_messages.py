@@ -17,12 +17,12 @@ optional extra: `pip install hollis[anthropic]`.
 
 import os
 from types import TracebackType
-from typing import Self
+from typing import Any, Self, cast
 
 import httpx2
 from anthropic import APIConnectionError, APIStatusError, AsyncAnthropic, Omit, omit
 from anthropic.types import Message
-from pydantic import SecretStr
+from pydantic import JsonValue, SecretStr
 
 from hollis.adapters._http import build_async_client, parse_retry_after, status_error
 from hollis.adapters._http import transport_failure as _transport_failure
@@ -33,6 +33,7 @@ from hollis.adapters.config import (
     HeaderAuth,
     NoAuth,
 )
+from hollis.runtime.conversation import AssistantTurn, ProviderContinuation, ToolCall, ToolSpec
 from hollis.runtime.model import (
     DeploymentDescriptor,
     FailureKind,
@@ -59,8 +60,9 @@ _STOP_REASONS: dict[str, StopReason] = {
     "stop_sequence": StopReason.STOP_SEQUENCE,
     "refusal": StopReason.REFUSAL,
     "model_context_window_exceeded": StopReason.CONTEXT_WINDOW_EXCEEDED,
+    "tool_use": StopReason.TOOL_USE,
 }
-_IGNORED_BLOCKS = frozenset({"text", "thinking", "redacted_thinking"})
+_IGNORED_BLOCKS = frozenset({"text", "thinking", "redacted_thinking", "tool_use"})
 
 
 class AnthropicMessagesProvider:
@@ -148,7 +150,8 @@ class AnthropicMessagesProvider:
             message = await client.messages.create(
                 model=request.model,
                 max_tokens=request.max_output_tokens,
-                messages=[{"role": "user", "content": request.input}],
+                messages=cast(Any, request_messages(request)),
+                tools=cast(Any, [_tool_param(t) for t in request.tools]) if request.tools else omit,
                 system=request.instructions if request.instructions is not None else omit,
                 output_config={"effort": effort} if effort is not None else omit,
                 extra_headers=self._request_headers or None,
@@ -187,14 +190,74 @@ def _env_custom_header_names() -> list[str]:
     return [line.split(":", 1)[0].strip() for line in raw.splitlines() if ":" in line]
 
 
+def request_messages(request: ModelRequest) -> list[dict[str, Any]]:
+    """The Messages API conversation: the run input, then each assistant turn and its results."""
+    messages: list[dict[str, Any]] = [{"role": "user", "content": request.input}]
+    for item in request.history:
+        if isinstance(item, AssistantTurn):
+            messages.append({"role": "assistant", "content": _assistant_content(item)})
+        else:
+            messages.append(
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": result.call_id,
+                            "content": result.content,
+                            "is_error": result.is_error,
+                        }
+                        for result in item.results
+                    ],
+                }
+            )
+    return messages
+
+
+def _assistant_content(turn: AssistantTurn) -> list[dict[str, Any]]:
+    continuation = turn.continuation
+    if continuation is not None and continuation.protocol == PROTOCOL:
+        # Sent back unchanged: thinking blocks and their signatures must not be modified.
+        return cast(list[dict[str, Any]], continuation.data)
+    blocks: list[dict[str, Any]] = []
+    if turn.content:
+        blocks.append({"type": "text", "text": turn.content})
+    blocks.extend(
+        {"type": "tool_use", "id": c.call_id, "name": c.name, "input": c.arguments or {}}
+        for c in turn.tool_calls
+    )
+    return blocks
+
+
+def _tool_param(spec: ToolSpec) -> dict[str, Any]:
+    return {"name": spec.name, "description": spec.description, "input_schema": spec.input_schema}
+
+
 def _to_response(message: Message) -> ModelResponse:
     texts: list[str] = []
     omitted: list[str] = []
+    calls: list[ToolCall] = []
     for block in message.content:
         if block.type == "text":
             texts.append(block.text)
+        elif block.type == "tool_use":
+            arguments = block.input if isinstance(block.input, dict) else None  # pyright: ignore[reportUnnecessaryIsInstance]
+            calls.append(
+                ToolCall(
+                    call_id=block.id,
+                    name=block.name,
+                    arguments=cast(dict[str, JsonValue] | None, arguments),
+                    parse_error=None if arguments is not None else "tool input is not an object",
+                )
+            )
         elif block.type not in _IGNORED_BLOCKS:
             omitted.append(block.type)
+    continuation = None
+    if calls:
+        continuation = ProviderContinuation(
+            protocol=PROTOCOL,
+            data=cast(JsonValue, [block.to_dict() for block in message.content]),
+        )
     usage = message.usage
     details = usage.output_tokens_details
     return ModelResponse(
@@ -212,4 +275,6 @@ def _to_response(message: Message) -> ModelResponse:
         provider_request_id=message._request_id,  # pyright: ignore[reportPrivateUsage]
         provider_response_id=message.id,
         omitted_block_types=tuple(omitted),
+        tool_calls=tuple(calls),
+        continuation=continuation,
     )

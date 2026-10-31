@@ -162,7 +162,7 @@ async def test_refusal_is_a_response() -> None:
         ("stop", StopReason.END_TURN),
         ("length", StopReason.MAX_TOKENS),
         ("content_filter", StopReason.CONTENT_FILTERED),
-        ("tool_calls", StopReason.OTHER),
+        ("tool_calls", StopReason.TOOL_USE),
         (None, StopReason.OTHER),
     ],
 )

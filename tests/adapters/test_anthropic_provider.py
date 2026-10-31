@@ -150,12 +150,22 @@ async def test_refusal_is_a_response_not_an_error() -> None:
     assert response.usage.thinking_tokens is None
 
 
-async def test_unexpected_blocks_are_reported_not_dropped_silently() -> None:
+async def test_tool_use_in_a_truncated_response_is_still_surfaced() -> None:
     mock = MockAnthropic(ok(fixture("message_max_tokens_with_tool_use.json")))
     response = await mock.provider().generate(_request())
     assert response.content == "Partial ans"
     assert response.stop_reason is StopReason.MAX_TOKENS
-    assert response.omitted_block_types == ("tool_use",)
+    assert [c.name for c in response.tool_calls] == [
+        "unexpected"
+    ]  # the runtime rejects unknown tools
+    assert response.omitted_block_types == ()
+
+
+async def test_unknown_block_types_are_reported_not_dropped_silently() -> None:
+    body = fixture("message_thinking_and_text.json")
+    body["content"] = [*body["content"], {"type": "container_upload", "file_id": "file_1"}]
+    response = await MockAnthropic(ok(body)).provider().generate(_request())
+    assert response.omitted_block_types == ("container_upload",)
 
 
 @pytest.mark.parametrize(
@@ -167,7 +177,7 @@ async def test_unexpected_blocks_are_reported_not_dropped_silently() -> None:
         ("refusal", StopReason.REFUSAL),
         ("model_context_window_exceeded", StopReason.CONTEXT_WINDOW_EXCEEDED),
         ("pause_turn", StopReason.OTHER),
-        ("tool_use", StopReason.OTHER),
+        ("tool_use", StopReason.TOOL_USE),
         (None, StopReason.OTHER),
     ],
 )

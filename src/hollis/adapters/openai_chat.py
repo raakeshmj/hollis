@@ -16,10 +16,10 @@ declared options and capabilities, never guessed. Requires `pip install hollis[o
 
 import json
 from types import TracebackType
-from typing import Any, Self
+from typing import Any, Self, cast
 
 import httpx2
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, SecretStr, ValidationError
 
 from hollis.adapters._http import (
     build_async_client,
@@ -35,6 +35,7 @@ from hollis.adapters.config import (
     NoAuth,
     OpenAIChatOptions,
 )
+from hollis.runtime.conversation import AssistantTurn, ToolCall
 from hollis.runtime.model import (
     DeploymentDescriptor,
     FailureKind,
@@ -51,6 +52,7 @@ _FINISH_REASONS: dict[str, StopReason] = {
     "stop": StopReason.END_TURN,
     "length": StopReason.MAX_TOKENS,
     "content_filter": StopReason.CONTENT_FILTERED,
+    "tool_calls": StopReason.TOOL_USE,
 }
 
 
@@ -58,9 +60,22 @@ class _Tolerant(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
+class _Function(_Tolerant):
+    name: str
+    arguments: str = ""
+
+
+class _ToolCallWire(_Tolerant):
+    id: str = ""
+    type: str = "function"
+    function: _Function | None = None
+
+
 class _Message(_Tolerant):
     content: str | list[dict[str, Any]] | None = None
     refusal: str | None = None
+    tool_calls: list[_ToolCallWire] | None = None
+    function_call: dict[str, Any] | None = None
 
 
 class _Choice(_Tolerant):
@@ -133,15 +148,40 @@ class OpenAIChatProvider:
 
     def request_body(self, request: ModelRequest) -> dict[str, Any]:
         options = self._options
-        messages: list[dict[str, str]] = []
+        messages: list[dict[str, Any]] = []
         if request.instructions is not None:
             messages.append({"role": options.system_role, "content": request.instructions})
         messages.append({"role": "user", "content": request.input})
+        for item in request.history:
+            if isinstance(item, AssistantTurn):
+                messages.append(_assistant_message(item))
+            else:
+                messages.extend(
+                    {
+                        "role": "tool",
+                        "tool_call_id": r.call_id,
+                        # The protocol has no error flag on tool messages.
+                        "content": f"[tool error] {r.content}" if r.is_error else r.content,
+                    }
+                    for r in item.results
+                )
         body: dict[str, Any] = {
             "model": request.model,
             "messages": messages,
             options.token_limit_param: request.max_output_tokens,
         }
+        if request.tools:
+            body["tools"] = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": t.name,
+                        "description": t.description,
+                        "parameters": t.input_schema,
+                    },
+                }
+                for t in request.tools
+            ]
         if options.reasoning_effort is not None:
             body["reasoning_effort"] = options.reasoning_effort
         body.update(options.extra_body)
@@ -203,8 +243,66 @@ def _text(content: str | list[dict[str, Any]] | None) -> str:
     )
 
 
+def _assistant_message(turn: AssistantTurn) -> dict[str, Any]:
+    message: dict[str, Any] = {"role": "assistant", "content": turn.content or None}
+    if turn.tool_calls:
+        message["tool_calls"] = [
+            {
+                "id": c.call_id,
+                "type": "function",
+                "function": {
+                    "name": c.name,
+                    # Echo the model's own argument string when there is one.
+                    "arguments": c.raw_arguments
+                    if c.raw_arguments is not None
+                    else json.dumps(c.arguments or {}),
+                },
+            }
+            for c in turn.tool_calls
+        ]
+    return message
+
+
+def _tool_calls(message: _Message, request_id: str | None) -> tuple[ToolCall, ...]:
+    if message.function_call is not None and not message.tool_calls:
+        raise ModelCallError(
+            FailureKind.INVALID_RESPONSE,
+            "response used the legacy function_call field, which Hollis does not request",
+            provider_request_id=request_id,
+        )
+    calls: list[ToolCall] = []
+    for wire in message.tool_calls or ():
+        if wire.type != "function" or wire.function is None:
+            raise ModelCallError(
+                FailureKind.INVALID_RESPONSE,
+                f"unsupported tool call type {wire.type!r}",
+                provider_request_id=request_id,
+            )
+        arguments: dict[str, JsonValue] | None = None
+        parse_error: str | None = None
+        try:
+            parsed: object = json.loads(wire.function.arguments or "{}")
+            if isinstance(parsed, dict):
+                arguments = cast(dict[str, JsonValue], parsed)
+            else:
+                parse_error = "arguments are not a JSON object"
+        except json.JSONDecodeError as exc:
+            parse_error = f"invalid JSON at position {exc.pos}"
+        calls.append(
+            ToolCall(
+                call_id=wire.id,
+                name=wire.function.name,
+                arguments=arguments,
+                raw_arguments=wire.function.arguments,
+                parse_error=parse_error,
+            )
+        )
+    return tuple(calls)
+
+
 def _to_response(completion: _Completion, request_id: str | None) -> ModelResponse:
     choice = completion.choices[0]
+    calls = _tool_calls(choice.message, request_id)
     stop = _FINISH_REASONS.get(choice.finish_reason or "", StopReason.OTHER)
     if choice.message.refusal:
         stop = StopReason.REFUSAL
@@ -228,4 +326,5 @@ def _to_response(completion: _Completion, request_id: str | None) -> ModelRespon
         served_model=completion.model,
         provider_request_id=request_id,
         provider_response_id=completion.id,
+        tool_calls=calls,
     )

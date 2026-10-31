@@ -13,7 +13,12 @@ from pydantic import SecretStr
 
 from hollis.adapters.anthropic_messages import AnthropicMessagesProvider
 from hollis.adapters.config import AnthropicMessagesOptions, AuthConfig, BearerAuth, EndpointConfig
-from hollis.runtime.model import DeploymentDescriptor, Locality
+from hollis.runtime.model import (
+    DeploymentDescriptor,
+    Locality,
+    ModelCapabilities,
+    TextCapabilities,
+)
 from tests.support.http import MockHTTP
 
 FIXTURES = Path(__file__).parents[1] / "adapters" / "fixtures" / "anthropic"
@@ -28,6 +33,7 @@ DESCRIPTOR = DeploymentDescriptor(
     endpoint=BASE_URL,
     locality=Locality.EXTERNAL,
     deduplicates_requests=False,
+    capabilities=ModelCapabilities(text=TextCapabilities(tools=True)),
 )
 
 

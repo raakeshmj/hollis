@@ -27,8 +27,16 @@ OPTIONS: dict[str, dict[str, dict[str, Any]]] = {
 # protocol -> provider label -> default `capabilities`
 CAPABILITIES: dict[str, dict[str, dict[str, Any]]] = {
     "anthropic-messages": {
-        # Ollama documents Messages-compatible token counts as approximations.
+        # Anthropic's API documents tool use for current models.
+        "anthropic": {"text": {"tools": True}},
+        # Ollama documents Messages-compatible token counts as approximations. Tool support
+        # depends on the served model, so it is not declared here.
         "ollama": {"text": {"usage_reporting": "approximate"}},
+    },
+    "openai-chat-completions": {
+        # OpenAI documents function tools for Chat Completions. Self-hosted servers support tools
+        # only for some models and parsers, so operators declare it per deployment.
+        "openai": {"text": {"tools": True}},
     },
 }
 
