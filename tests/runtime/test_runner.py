@@ -102,6 +102,7 @@ async def test_happy_path(store: RunStore) -> None:
     assert final == await load_run(store, created.run_id)
     assert _types(await store.read(created.run_id)) == [
         EventType.RUN_CREATED,
+        EventType.CONTEXT_ASSEMBLED,
         EventType.MODEL_CALL_STARTED,
         EventType.MODEL_RESPONSE_RECORDED,
         EventType.RUN_COMPLETED,
@@ -197,6 +198,7 @@ async def test_transient_failure_is_retried_with_backoff(store: RunStore) -> Non
     assert time.sleeps == [0.5, 1.0]  # exponential backoff, jitter pinned to its maximum
     assert _types(await store.read(final.run_id)) == [
         EventType.RUN_CREATED,
+        EventType.CONTEXT_ASSEMBLED,
         EventType.MODEL_CALL_STARTED,
         EventType.MODEL_CALL_FAILED,
         EventType.MODEL_CALL_STARTED,

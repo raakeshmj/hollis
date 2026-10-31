@@ -23,6 +23,9 @@ from pydantic import (
     model_validator,
 )
 
+from hollis.runtime.artifacts import ArtifactRef
+from hollis.runtime.context import CompactionSummary, ContextBudget, ContextPolicy, TokenEstimate
+from hollis.runtime.memory import MemoryAccess, RecalledMemory
 from hollis.runtime.model import (
     CallOutcome,
     DeploymentRef,
@@ -43,6 +46,9 @@ class EventType(StrEnum):
     TOOL_APPROVAL_RESOLVED = "tool_approval_resolved"
     TOOL_EXECUTION_STARTED = "tool_execution_started"
     TOOL_RESULT_RECORDED = "tool_result_recorded"
+    MEMORY_RECALLED = "memory_recalled"
+    CONTEXT_COMPACTED = "context_compacted"
+    CONTEXT_ASSEMBLED = "context_assembled"
     RUN_COMPLETED = "run_completed"
     RUN_FAILED = "run_failed"
 
@@ -61,6 +67,9 @@ class RunCreated(_Payload):
     ambiguous_policy: AmbiguousOutcomePolicy
     tools: tuple[ToolRef, ...] = ()
     """Tools enabled for this run (least privilege): the model may call only these."""
+    context: ContextPolicy = ContextPolicy()
+    memory: MemoryAccess | None = None
+    """Memory namespaces granted to this run by the application."""
 
 
 class ModelCallStarted(_Payload):
@@ -167,6 +176,43 @@ class ToolResultRecorded(_Payload):
     truncated: bool = False
     original_chars: int = Field(default=0, ge=0)
     duration_ms: int | None = Field(default=None, ge=0)
+    artifact: ArtifactRef | None = None
+    """Where the complete result is stored, when it was too large to record in full."""
+
+
+class MemoryRecalled(_Payload):
+    """Memories recalled into the run's context at its start, exactly as shown to the model."""
+
+    type: Literal[EventType.MEMORY_RECALLED] = EventType.MEMORY_RECALLED
+    query: str
+    scopes: tuple[str, ...]
+    memories: tuple[RecalledMemory, ...] = ()
+
+
+class ContextCompacted(_Payload):
+    """A derived summary of earlier turns. The summarized turns stay in the log unchanged."""
+
+    type: Literal[EventType.CONTEXT_COMPACTED] = EventType.CONTEXT_COMPACTED
+    compaction: int = Field(ge=0)
+    summary: CompactionSummary
+
+
+class ContextAssembled(_Payload):
+    """How the context of one logical model call was assembled, recorded before its first
+    attempt. Every attempt of the call sends the request this plan describes."""
+
+    type: Literal[EventType.CONTEXT_ASSEMBLED] = EventType.CONTEXT_ASSEMBLED
+    operation_id: str = Field(min_length=1)
+    history_start: int = Field(ge=0)
+    """First turn sent verbatim; earlier turns are represented by the latest summary."""
+    cleared: tuple[str, ...] = ()
+    """Invocations whose (artifact-backed) results are replaced by a reference."""
+    memories: tuple[str, ...] = ()
+    """Recalled memories included, by id."""
+    estimate: TokenEstimate
+    budget: ContextBudget
+    excluded: tuple[str, ...] = ()
+    """What was left out, and why."""
 
 
 class RunCompleted(_Payload):
@@ -182,6 +228,8 @@ class FailureReason(StrEnum):
     """Attempts, turns, tool calls or the deadline ran out."""
     MODEL_PROTOCOL_ERROR = "model_protocol_error"
     """The model's response cannot be continued (e.g. duplicate tool call ids)."""
+    CONTEXT_EXHAUSTED = "context_exhausted"
+    """The mandatory context alone does not fit the input budget."""
 
 
 class RunFailed(_Payload):
@@ -202,6 +250,9 @@ AnyPayload = (
     | ToolApprovalResolved
     | ToolExecutionStarted
     | ToolResultRecorded
+    | MemoryRecalled
+    | ContextCompacted
+    | ContextAssembled
     | RunCompleted
     | RunFailed
 )
@@ -210,14 +261,17 @@ EventPayload = Annotated[AnyPayload, Field(discriminator="type")]
 # Current payload schema version per event type. Bump a version only together with an
 # upcaster in _UPCASTERS that converts the previous version's payload dict.
 CURRENT_SCHEMA_VERSIONS: Mapping[EventType, int] = {
-    EventType.RUN_CREATED: 3,
+    EventType.RUN_CREATED: 4,
     EventType.MODEL_CALL_STARTED: 1,
-    EventType.MODEL_RESPONSE_RECORDED: 3,
+    EventType.MODEL_RESPONSE_RECORDED: 4,
     EventType.MODEL_CALL_FAILED: 1,
     EventType.TOOL_CALL_DECIDED: 1,
     EventType.TOOL_APPROVAL_RESOLVED: 1,
     EventType.TOOL_EXECUTION_STARTED: 1,
-    EventType.TOOL_RESULT_RECORDED: 1,
+    EventType.TOOL_RESULT_RECORDED: 2,
+    EventType.MEMORY_RECALLED: 1,
+    EventType.CONTEXT_COMPACTED: 1,
+    EventType.CONTEXT_ASSEMBLED: 1,
     EventType.RUN_COMPLETED: 1,
     EventType.RUN_FAILED: 2,
 }
@@ -235,7 +289,9 @@ type Upcaster = Callable[[dict[str, Any]], dict[str, Any]]
 
 
 def _added_defaulted_fields(payload: dict[str, Any]) -> dict[str, Any]:
-    """v2 -> v3 for changes that only add fields with defaults (M3: tools, tool calls)."""
+    """For changes that only add fields with defaults: M3 (v2 -> v3: tools, tool calls) and M4
+    (RunCreated v3 -> v4: context policy, memory access; ModelResponseRecorded v3 -> v4:
+    `Usage.cache_included_in_input`; ToolResultRecorded v1 -> v2: artifact)."""
     return payload
 
 
@@ -243,6 +299,9 @@ def _added_defaulted_fields(payload: dict[str, Any]) -> dict[str, Any]:
 _UPCASTERS: Mapping[tuple[EventType, int], Upcaster] = {
     (EventType.RUN_CREATED, 2): _added_defaulted_fields,
     (EventType.MODEL_RESPONSE_RECORDED, 2): _added_defaulted_fields,
+    (EventType.RUN_CREATED, 3): _added_defaulted_fields,
+    (EventType.MODEL_RESPONSE_RECORDED, 3): _added_defaulted_fields,
+    (EventType.TOOL_RESULT_RECORDED, 1): _added_defaulted_fields,
 }
 
 

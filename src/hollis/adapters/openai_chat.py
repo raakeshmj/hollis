@@ -35,7 +35,7 @@ from hollis.adapters.config import (
     NoAuth,
     OpenAIChatOptions,
 )
-from hollis.runtime.conversation import AssistantTurn, ToolCall
+from hollis.runtime.conversation import AssistantTurn, ToolCall, render_context
 from hollis.runtime.model import (
     DeploymentDescriptor,
     FailureKind,
@@ -151,7 +151,11 @@ class OpenAIChatProvider:
         messages: list[dict[str, Any]] = []
         if request.instructions is not None:
             messages.append({"role": options.system_role, "content": request.instructions})
-        messages.append({"role": "user", "content": request.input})
+        user = request.input
+        if request.context:
+            # One user message: some compatible servers reject consecutive user messages.
+            user = f"{render_context(request.context)}\n\n{request.input}"
+        messages.append({"role": "user", "content": user})
         for item in request.history:
             if isinstance(item, AssistantTurn):
                 messages.append(_assistant_message(item))
@@ -318,6 +322,7 @@ def _to_response(completion: _Completion, request_id: str | None) -> ModelRespon
             thinking_tokens=u.completion_tokens_details.reasoning_tokens
             if u.completion_tokens_details
             else None,
+            cache_included_in_input=True,  # prompt_tokens includes cached_tokens
         )
     return ModelResponse(
         content=_text(choice.message.content),

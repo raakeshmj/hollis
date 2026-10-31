@@ -33,7 +33,13 @@ from hollis.adapters.config import (
     HeaderAuth,
     NoAuth,
 )
-from hollis.runtime.conversation import AssistantTurn, ProviderContinuation, ToolCall, ToolSpec
+from hollis.runtime.conversation import (
+    AssistantTurn,
+    ProviderContinuation,
+    ToolCall,
+    ToolSpec,
+    render_context,
+)
 from hollis.runtime.model import (
     DeploymentDescriptor,
     FailureKind,
@@ -162,6 +168,28 @@ class AnthropicMessagesProvider:
             raise _transport_failure(exc.__cause__) from exc
         return _to_response(message)
 
+    async def count_input_tokens(self, request: ModelRequest) -> int:
+        """Exact input tokens for `request`, from the Messages API count_tokens endpoint.
+
+        A separate (free, rate-limited) API call to the same endpoint. The context engine uses it
+        only when its own estimate is close to the budget (ADR-0018)."""
+        effort = self._options.effort
+        client = self._client.with_options(max_retries=0, timeout=request.timeout_s)
+        try:
+            counted = await client.messages.count_tokens(
+                model=request.model,
+                messages=cast(Any, request_messages(request)),
+                tools=cast(Any, [_tool_param(t) for t in request.tools]) if request.tools else omit,
+                system=request.instructions if request.instructions is not None else omit,
+                output_config={"effort": effort} if effort is not None else omit,
+                extra_headers=self._request_headers or None,
+            )
+        except APIStatusError as exc:
+            raise self._status_error(exc) from exc
+        except APIConnectionError as exc:
+            raise _transport_failure(exc.__cause__) from exc
+        return counted.input_tokens
+
     def _status_error(self, exc: APIStatusError) -> ModelCallError:
         headers = exc.response.headers
         quota = (
@@ -192,7 +220,13 @@ def _env_custom_header_names() -> list[str]:
 
 def request_messages(request: ModelRequest) -> list[dict[str, Any]]:
     """The Messages API conversation: the run input, then each assistant turn and its results."""
-    messages: list[dict[str, Any]] = [{"role": "user", "content": request.input}]
+    first: str | list[dict[str, Any]] = request.input
+    if request.context:
+        first = [
+            {"type": "text", "text": render_context(request.context)},
+            {"type": "text", "text": request.input},
+        ]
+    messages: list[dict[str, Any]] = [{"role": "user", "content": first}]
     for item in request.history:
         if isinstance(item, AssistantTurn):
             messages.append({"role": "assistant", "content": _assistant_content(item)})

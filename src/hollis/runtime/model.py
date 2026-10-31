@@ -10,7 +10,13 @@ from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from hollis.runtime.conversation import HistoryItem, ProviderContinuation, ToolCall, ToolSpec
+from hollis.runtime.conversation import (
+    ContextBlock,
+    HistoryItem,
+    ProviderContinuation,
+    ToolCall,
+    ToolSpec,
+)
 
 
 class _Frozen(BaseModel):
@@ -26,6 +32,20 @@ class Usage(_Frozen):
     cache_creation_input_tokens: int | None = Field(default=None, ge=0)
     thinking_tokens: int | None = Field(default=None, ge=0)
     """Portion of `output_tokens` spent on reasoning, when the provider reports it."""
+    cache_included_in_input: bool = False
+    """True when `input_tokens` already includes cached tokens (OpenAI-style). Anthropic reports
+    cache reads and writes separately from `input_tokens`."""
+
+    @property
+    def total_input_tokens(self) -> int:
+        """Every input token the provider processed for the request, cached or not."""
+        if self.cache_included_in_input:
+            return self.input_tokens
+        return (
+            self.input_tokens
+            + (self.cache_read_input_tokens or 0)
+            + (self.cache_creation_input_tokens or 0)
+        )
 
 
 class StopReason(StrEnum):
@@ -64,8 +84,12 @@ class ModelRequest(_Frozen):
     input: str
     """The run's initial user message."""
     instructions: str | None = None
+    context: tuple[ContextBlock, ...] = ()
+    """Reference data (recalled memories, compaction summaries) sent before `input` in the first
+    user message, rendered with `render_context`. Never part of `instructions`."""
     history: tuple[HistoryItem, ...] = ()
-    """Earlier assistant turns and tool results, in order, after `input`."""
+    """Assistant turns and tool results after `input`, in order. After compaction this starts at
+    the first turn kept verbatim."""
     tools: tuple[ToolSpec, ...] = ()
     max_output_tokens: int = Field(ge=1)
     timeout_s: float = Field(gt=0)
@@ -189,6 +213,10 @@ class TextCapabilities(_Frozen):
     tools: bool = False
     streaming: bool = False
     image_input: bool = False
+    context_window_tokens: int | None = Field(default=None, ge=1)
+    """Total tokens (input plus output) the deployment accepts per request. None means unknown:
+    the context engine then applies only a configured input budget, and records that the
+    window is unknown."""
 
 
 class ModelCapabilities(_Frozen):
@@ -261,6 +289,14 @@ class ModelProvider(Protocol):
     def descriptor(self) -> DeploymentDescriptor: ...
 
     async def generate(self, request: ModelRequest) -> ModelResponse: ...
+
+
+@runtime_checkable
+class TokenCounter(Protocol):
+    """Optional provider capability: count a request's input tokens exactly, as the provider's
+    tokenizer would. Implemented by adapters whose API offers it (e.g. Anthropic count_tokens)."""
+
+    async def count_input_tokens(self, request: ModelRequest) -> int: ...
 
 
 @runtime_checkable

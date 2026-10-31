@@ -133,7 +133,9 @@ async def test_openai_reference_response() -> None:
         "cache_read_input_tokens": 4,
         "cache_creation_input_tokens": None,
         "thinking_tokens": 6,
+        "cache_included_in_input": True,
     }
+    assert response.usage.total_input_tokens == 12  # cached tokens are part of prompt_tokens
 
 
 async def test_reasoning_content_is_not_persisted_as_output() -> None:

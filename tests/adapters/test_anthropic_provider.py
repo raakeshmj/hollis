@@ -139,6 +139,7 @@ async def test_text_blocks_are_joined_and_metadata_captured() -> None:
         "cache_read_input_tokens": 12,
         "cache_creation_input_tokens": 0,
         "thinking_tokens": 28,
+        "cache_included_in_input": False,
     }
 
 

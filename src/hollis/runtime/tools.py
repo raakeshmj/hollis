@@ -16,6 +16,7 @@ from uuid import UUID
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, JsonValue
 
 from hollis.runtime.conversation import TOOL_NAME_PATTERN, ToolCall, ToolSpec
+from hollis.runtime.memory import MemoryAccess
 
 
 class _Frozen(BaseModel):
@@ -162,6 +163,8 @@ class ToolContext(_Frozen):
     """Stable across attempts: use it as an idempotency key with external services."""
     attempt: int
     deadline: AwareDatetime | None = None
+    memory: MemoryAccess | None = None
+    """Memory namespaces granted to the run (from RunCreated), for memory tools."""
 
 
 @runtime_checkable

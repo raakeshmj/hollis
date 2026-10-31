@@ -11,6 +11,7 @@ import json
 
 from pydantic import JsonValue
 
+from hollis.runtime.artifacts import ArtifactRef
 from hollis.runtime.conversation import ToolResultMessage
 from hollis.runtime.events import ToolOutcome
 from hollis.runtime.redaction import Redactor
@@ -89,13 +90,27 @@ def finalize(
     output: ToolOutput, *, limit: int, redactor: Redactor
 ) -> tuple[tuple[ResultPart, ...], bool, int]:
     """Redact and limit tool output. Returns (parts, truncated, original_chars)."""
-    parts = tuple(_redact(part, redactor) for part in output.parts)
+    parts = redact_parts(output.parts, redactor)
     rendered = render_parts(parts)
     original = len(rendered)
     if original <= limit:
         return parts, False, original
     marker = f"\n[output truncated: showing {limit} of {original} characters]"
     return (TextPart(text=rendered[:limit] + marker),), True, original
+
+
+def redact_parts(parts: tuple[ResultPart, ...], redactor: Redactor) -> tuple[ResultPart, ...]:
+    return tuple(_redact(part, redactor) for part in parts)
+
+
+def artifact_preview(text: str, ref: ArtifactRef, limit: int) -> TextPart:
+    """The bounded part of an artifact-backed result recorded in the log and shown to the model."""
+    shown = min(limit, len(text))
+    marker = (
+        f"\n[output truncated: showing {shown} of {ref.chars} characters; the complete result is "
+        f"stored as artifact {ref.artifact_id}]"
+    )
+    return TextPart(text=text[:shown] + marker)
 
 
 def _redact(part: ResultPart, redactor: Redactor) -> ResultPart:

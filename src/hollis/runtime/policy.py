@@ -30,7 +30,7 @@ class RunBudget(BaseModel):
     attempt_timeout_s: float = Field(default=120.0, gt=0, le=3600)
     deadline_s: float | None = Field(default=None, gt=0)
     """Wall-clock limit measured from run creation; survives crashes and resumes."""
-    max_model_turns: int = Field(default=8, ge=1, le=100)
+    max_model_turns: int = Field(default=8, ge=1, le=1000)
     """Logical model calls per run (each tool round trip adds one)."""
     max_tool_calls: int = Field(default=32, ge=0, le=1000)
     """Tool invocations per run that may be authorized; further calls are rejected."""

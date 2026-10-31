@@ -5,6 +5,11 @@ appends events, a log that violates these rules cannot be folded. In particular,
 start executing after an allow decision or a matching recorded approval, nothing in a turn runs
 while any approval in it is pending, and a started invocation can only be retried if its tool is
 declared idempotent.
+
+Context rules (ADR-0018): memories are recalled at most once, before the first model call, and only
+from namespaces granted to the run; a compaction covers whole turns and always leaves the latest
+turn verbatim; and an assembled context must start exactly where the latest compaction ends, so no
+turn can be dropped from a request without being represented by a recorded summary.
 """
 
 from collections.abc import Iterable, Mapping
@@ -15,11 +20,16 @@ from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, JsonValue
 
+from hollis.runtime.artifacts import ArtifactRef
+from hollis.runtime.context import CompactionSummary, ContextPolicy, TokenEstimate
 from hollis.runtime.conversation import ToolCall
 from hollis.runtime.events import (
+    ContextAssembled,
+    ContextCompacted,
     EventEnvelope,
     EventType,
     FailureReason,
+    MemoryRecalled,
     ModelCallFailed,
     ModelCallStarted,
     ModelResponseRecorded,
@@ -33,6 +43,7 @@ from hollis.runtime.events import (
     ToolOutcome,
     ToolResultRecorded,
 )
+from hollis.runtime.memory import MemoryAccess, RecalledMemory
 from hollis.runtime.model import CallOutcome, DeploymentRef, FailureKind, ModelResponse
 from hollis.runtime.policy import AmbiguousOutcomePolicy, RunBudget
 from hollis.runtime.tools import (
@@ -87,6 +98,8 @@ TRANSITIONS: Mapping[tuple[RunStatus | None, EventType], RunStatus] = {
     (None, E.RUN_CREATED): S.PENDING,
     (S.PENDING, E.MODEL_CALL_STARTED): S.MODEL_CALL_IN_FLIGHT,
     (S.PENDING, E.RUN_FAILED): S.FAILED,
+    (S.PENDING, E.MEMORY_RECALLED): S.PENDING,
+    (S.PENDING, E.CONTEXT_ASSEMBLED): S.PENDING,
     (S.MODEL_CALL_IN_FLIGHT, E.MODEL_RESPONSE_RECORDED): S.MODEL_RESPONDED,
     (S.MODEL_CALL_IN_FLIGHT, E.MODEL_CALL_FAILED): S.ATTEMPT_FAILED,
     (S.ATTEMPT_FAILED, E.MODEL_CALL_STARTED): S.MODEL_CALL_IN_FLIGHT,
@@ -95,6 +108,8 @@ TRANSITIONS: Mapping[tuple[RunStatus | None, EventType], RunStatus] = {
     (S.MODEL_RESPONDED, E.TOOL_CALL_DECIDED): S.TOOL_CALLS,
     (S.MODEL_RESPONDED, E.RUN_FAILED): S.FAILED,
     **{(S.TOOL_CALLS, event): S.TOOL_CALLS for event in _TOOL_EVENTS},
+    (S.TOOL_CALLS, E.CONTEXT_COMPACTED): S.TOOL_CALLS,
+    (S.TOOL_CALLS, E.CONTEXT_ASSEMBLED): S.TOOL_CALLS,
     (S.TOOL_CALLS, E.MODEL_CALL_STARTED): S.MODEL_CALL_IN_FLIGHT,
     (S.TOOL_CALLS, E.RUN_FAILED): S.FAILED,
 }
@@ -148,6 +163,7 @@ class Invocation(_Frozen):
     parts: tuple[ResultPart, ...] = ()
     truncated: bool = False
     original_chars: int = 0
+    artifact: ArtifactRef | None = None
 
     @property
     def awaiting_approval(self) -> bool:
@@ -167,6 +183,8 @@ class Invocation(_Frozen):
 class Turn(_Frozen):
     response: ModelResponse
     invocations: tuple[Invocation, ...] = ()
+    estimate: TokenEstimate | None = None
+    """The input estimate recorded for the request that produced this turn, if any."""
 
 
 class RunState(_Frozen):
@@ -194,6 +212,19 @@ class RunState(_Frozen):
     usage: UsageTotals = UsageTotals()
     tool_calls_authorized: int = 0
     """Invocations decided as allow or require-approval (counted against the budget)."""
+    context_policy: ContextPolicy = ContextPolicy()
+    memory_access: MemoryAccess | None = None
+    memory_recalled: bool = False
+    memories: tuple[RecalledMemory, ...] = ()
+    """Memories recalled at run start, in ranked order."""
+    compactions: tuple[CompactionSummary, ...] = ()
+    context: ContextAssembled | None = None
+    """The assembled context of the current (or most recent) logical model call."""
+
+    @property
+    def compacted_through(self) -> int:
+        """Turns before this index are represented by the latest summary."""
+        return self.compactions[-1].through_turn if self.compactions else 0
 
     @property
     def deadline(self) -> datetime | None:
@@ -242,6 +273,8 @@ def apply(state: RunState | None, event: EventEnvelope) -> RunState:
             budget=payload.budget,
             ambiguous_policy=payload.ambiguous_policy,
             tools=payload.tools,
+            context_policy=payload.context,
+            memory_access=payload.memory,
         )
 
     if state is None:  # unreachable: next_status only allows RunCreated without a run
@@ -261,9 +294,14 @@ def apply(state: RunState | None, event: EventEnvelope) -> RunState:
                 )
                 for i, call in enumerate(response.tool_calls)
             )
+            context = state.context
+            estimate = context.estimate if context and context.operation_id == op else None
             update |= {
                 "response": response,
-                "turns": (*state.turns, Turn(response=response, invocations=invocations)),
+                "turns": (
+                    *state.turns,
+                    Turn(response=response, invocations=invocations, estimate=estimate),
+                ),
             }
             if response.usage is not None:
                 update["usage"] = UsageTotals(
@@ -281,6 +319,12 @@ def apply(state: RunState | None, event: EventEnvelope) -> RunState:
             update |= _tool_execution_started(state, payload)
         case ToolResultRecorded():
             update |= _tool_result_recorded(state, payload)
+        case MemoryRecalled():
+            update |= _memory_recalled(state, payload)
+        case ContextCompacted():
+            update |= _context_compacted(state, payload)
+        case ContextAssembled():
+            update |= _context_assembled(state, payload)
         case RunFailed(operation_id=op, reason=reason, message=message, kind=kind):
             if state.operation_id is not None and op != state.operation_id:
                 raise InvalidEventSequence(f"operation_id {op!r} != {state.operation_id!r}")
@@ -329,6 +373,8 @@ def _model_call_started(state: RunState, op: str, attempt: int) -> dict[str, Any
     expected = operation_id_for(state.run_id, turn)
     if op != expected:
         raise InvalidEventSequence(f"operation_id {op!r} != {expected!r}")
+    if state.context is not None and state.context.operation_id not in (op, _previous_op(state)):
+        raise InvalidEventSequence("the assembled context belongs to a different model call")
     if attempt != 1:
         raise InvalidEventSequence(f"a new model call starts at attempt 1, not {attempt}")
     return {"operation_id": op, "attempts": 1, "last_failure": None}
@@ -342,6 +388,12 @@ def _require_current_attempt(state: RunState, operation_id: str, attempt: int) -
 
 
 def _require_consistent_reason(state: RunState, reason: FailureReason) -> None:
+    if reason is FailureReason.CONTEXT_EXHAUSTED:
+        if state.status not in (RunStatus.PENDING, RunStatus.TOOL_CALLS) or (
+            state.pending_invocations
+        ):
+            raise InvalidEventSequence("context_exhausted only before a new model call")
+        return
     if state.status in (RunStatus.MODEL_RESPONDED, RunStatus.TOOL_CALLS):
         if reason not in (FailureReason.BUDGET_EXHAUSTED, FailureReason.MODEL_PROTOCOL_ERROR):
             raise InvalidEventSequence(f"{reason} is not a valid failure during tool calls")
@@ -486,6 +538,84 @@ def _tool_result_recorded(state: RunState, event: ToolResultRecorded) -> dict[st
             "parts": event.parts,
             "truncated": event.truncated,
             "original_chars": event.original_chars,
+            "artifact": event.artifact,
         }
     )
     return _replace(state, finished)
+
+
+# --- context ------------------------------------------------------------------------------------
+
+
+def _previous_op(state: RunState) -> str | None:
+    return operation_id_for(state.run_id, len(state.turns) - 1) if state.turns else None
+
+
+def _memory_recalled(state: RunState, event: MemoryRecalled) -> dict[str, Any]:
+    if state.memory_recalled or state.turns or state.context is not None:
+        raise InvalidEventSequence("memories are recalled once, before the first model call")
+    granted = state.memory_access.read if state.memory_access is not None else ()
+    if not set(event.scopes) <= set(granted):
+        raise InvalidEventSequence("recall from memory scopes not granted to the run")
+    for memory in event.memories:
+        if memory.scope not in event.scopes:
+            raise InvalidEventSequence(
+                f"memory {memory.memory_id!r} is outside the recalled scopes"
+            )
+    if len({m.memory_id for m in event.memories}) != len(event.memories):
+        raise InvalidEventSequence("duplicate recalled memory")
+    return {"memory_recalled": True, "memories": event.memories}
+
+
+def _context_compacted(state: RunState, event: ContextCompacted) -> dict[str, Any]:
+    if state.pending_invocations:
+        raise InvalidEventSequence("compaction while tool calls are unanswered")
+    if event.compaction != len(state.compactions):
+        raise InvalidEventSequence(f"compaction {event.compaction} after {len(state.compactions)}")
+    if len(state.compactions) >= state.context_policy.max_compactions:
+        raise InvalidEventSequence("max_compactions exceeded")
+    through = event.summary.through_turn
+    if not state.compacted_through < through <= len(state.turns) - 1:
+        raise InvalidEventSequence(
+            f"compaction through turn {through} must cover new turns and keep the latest one"
+        )
+    ids = [item.item_id for item in event.summary.items]
+    if len(set(ids)) != len(ids):
+        raise InvalidEventSequence("duplicate summary item ids")
+    previous: set[str] = (
+        {item.item_id for item in state.compactions[-1].items} if state.compactions else set()
+    )
+    resolved = {r.item_id for r in event.summary.resolved}
+    if not resolved <= previous:
+        raise InvalidEventSequence("summary resolves items that were not active")
+    dropped = previous - set(ids) - resolved
+    if dropped:
+        raise InvalidEventSequence(f"summary drops items without resolving them: {sorted(dropped)}")
+    return {"compactions": (*state.compactions, event.summary)}
+
+
+def _context_assembled(state: RunState, event: ContextAssembled) -> dict[str, Any]:
+    if state.pending_invocations:
+        raise InvalidEventSequence("context assembled while tool calls are unanswered")
+    expected = operation_id_for(state.run_id, len(state.turns))
+    if event.operation_id != expected:
+        raise InvalidEventSequence(f"context for {event.operation_id!r}, expected {expected!r}")
+    if state.context is not None and state.context.operation_id == expected:
+        raise InvalidEventSequence("context already assembled for this model call")
+    if event.history_start != state.compacted_through:
+        raise InvalidEventSequence(
+            f"history must start at turn {state.compacted_through}, where the latest summary "
+            f"ends (got {event.history_start})"
+        )
+    clearable = {
+        i.invocation_id
+        for turn in state.turns[event.history_start : len(state.turns) - 1]
+        for i in turn.invocations
+        if i.artifact is not None
+    }
+    if not set(event.cleared) <= clearable:
+        raise InvalidEventSequence("only artifact-backed results of earlier turns can be cleared")
+    recalled = {m.memory_id for m in state.memories}
+    if not set(event.memories) <= recalled:
+        raise InvalidEventSequence("context includes memories that were not recalled")
+    return {"context": event}

@@ -102,11 +102,13 @@ async def test_multi_turn_tool_use_completes(store: RunStore) -> None:
     events = [e.event_type for e in await store.read(final.run_id)]
     assert events == [
         EventType.RUN_CREATED,
+        EventType.CONTEXT_ASSEMBLED,
         EventType.MODEL_CALL_STARTED,
         EventType.MODEL_RESPONSE_RECORDED,
         EventType.TOOL_CALL_DECIDED,
         EventType.TOOL_EXECUTION_STARTED,
         EventType.TOOL_RESULT_RECORDED,
+        EventType.CONTEXT_ASSEMBLED,
         EventType.MODEL_CALL_STARTED,
         EventType.MODEL_RESPONSE_RECORDED,
         EventType.RUN_COMPLETED,

@@ -35,7 +35,7 @@ def test_serialized_form_is_versioned_json() -> None:
         "occurred_at",
         "payload",
     }
-    assert data["schema_version"] == 3
+    assert data["schema_version"] == CURRENT_SCHEMA_VERSIONS[EventType.RUN_CREATED] == 4
     assert data["payload"]["type"] == "run_created"
 
 
@@ -99,15 +99,42 @@ def test_envelope_requires_utc_timestamp() -> None:
 def test_envelope_rejects_non_current_schema_version_in_memory() -> None:
     event = build_log(uuid4(), [created()])[0]
     with pytest.raises(ValidationError, match="not current"):
-        EventEnvelope.model_validate({**event.model_dump(), "schema_version": 4})
+        EventEnvelope.model_validate({**event.model_dump(), "schema_version": 3})
 
 
-def test_v2_run_created_and_response_are_upcast_to_v3() -> None:
+def test_v2_run_created_is_upcast_to_current() -> None:
     run = uuid4()
     created_event, *_ = build_log(run, happy_payloads(run))
     data = json.loads(serialize_event(created_event))
     data["schema_version"] = 2
-    del data["payload"]["tools"]  # v2 had no tools field
+    for added in ("tools", "context", "memory"):  # added in v3 (M3) and v4 (M4)
+        del data["payload"][added]
     upcast = deserialize_event(json.dumps(data))
-    assert upcast.schema_version == 3
+    assert upcast.schema_version == 4
     assert upcast.payload == created_event.payload
+
+
+def test_m3_tool_result_and_response_are_upcast() -> None:
+    run = uuid4()
+    log = build_log(run, happy_payloads(run))
+    response = next(e for e in log if e.event_type is EventType.MODEL_RESPONSE_RECORDED)
+    data = json.loads(serialize_event(response))
+    data["schema_version"] = 3
+    usage = data["payload"]["response"].get("usage")
+    if usage is not None:
+        del usage["cache_included_in_input"]
+    upcast = deserialize_event(json.dumps(data))
+    assert upcast.schema_version == 4
+    assert upcast.payload == response.payload
+
+    result = {
+        "event_id": str(uuid4()),
+        "run_id": str(run),
+        "sequence": 7,
+        "schema_version": 1,
+        "occurred_at": "2026-01-01T00:00:00Z",
+        "payload": {"type": "tool_result_recorded", "invocation_id": "x", "outcome": "success"},
+    }
+    decoded = deserialize_event(json.dumps(result))
+    assert decoded.schema_version == 2
+    assert getattr(decoded.payload, "artifact", "missing") is None

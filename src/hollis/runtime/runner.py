@@ -20,6 +20,11 @@ ambiguous outcomes. Tool semantics (ADR-0014):
   supports it, and otherwise recorded as ambiguous. It is never blindly repeated.
 - Results are redacted, size-limited and (for external tools) framed as untrusted data.
 
+Context (ADR-0018): before each new logical model call the runner recalls memories (once, at run
+start), compacts older turns when the plan requires it, and records the assembled context. Every
+attempt of the call sends the request built from that record. Large tool results are stored whole
+in the artifact store, when one is configured (ADR-0019).
+
 Secret handling (ADR-0009): failure messages, tool results and log records are redacted;
 registered secrets are removed from recorded model output, including tool-call arguments, and
 calls whose arguments contained one are denied. Run input is never rewritten; `create` rejects
@@ -37,10 +42,26 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
-from hollis.runtime.conversation import AssistantTurn, HistoryItem, ToolResultsTurn
+from hollis.runtime import assembly
+from hollis.runtime.artifacts import ArtifactRef, ArtifactStore
+from hollis.runtime.compaction import (
+    DeterministicSummarizer,
+    Summarizer,
+    SummarizeRequest,
+    deterministic_draft,
+)
+from hollis.runtime.context import (
+    CompactionMethod,
+    ContextPolicy,
+    SummaryRejected,
+    merge_summary,
+)
+from hollis.runtime.conversation import ToolSpec
 from hollis.runtime.events import (
     AnyPayload,
+    ContextCompacted,
     FailureReason,
+    MemoryRecalled,
     ModelCallFailed,
     ModelCallStarted,
     ModelResponseRecorded,
@@ -55,16 +76,17 @@ from hollis.runtime.events import (
     ToolResultRecorded,
     new_event,
 )
+from hollis.runtime.memory import MemoryAccess, MemoryRecall, RecallQuery
 from hollis.runtime.model import (
     CallOutcome,
     DeploymentRef,
     FailureKind,
     ModelCallError,
     ModelProvider,
-    ModelRequest,
     ModelResolver,
     ModelResponse,
     SingleProvider,
+    TokenCounter,
     require_text_generation,
 )
 from hollis.runtime.policy import (
@@ -75,7 +97,13 @@ from hollis.runtime.policy import (
     retry_delay,
 )
 from hollis.runtime.redaction import REDACTED, Redactor
-from hollis.runtime.results import finalize, redact_json, to_message
+from hollis.runtime.results import (
+    artifact_preview,
+    finalize,
+    redact_json,
+    redact_parts,
+    render_parts,
+)
 from hollis.runtime.state import (
     Invocation,
     RunState,
@@ -99,6 +127,7 @@ from hollis.runtime.tools import (
     ToolError,
     ToolOutput,
     ToolPolicy,
+    ToolTrust,
     approval_binding,
 )
 
@@ -129,6 +158,9 @@ class RunSpec(BaseModel):
     tools: tuple[str, ...] = ()
     """Names of catalog tools this run may use. Nothing else is offered to or callable by the
     model (least privilege per run)."""
+    context: ContextPolicy = ContextPolicy()
+    memory: MemoryAccess | None = None
+    """Memory namespaces this run may read and write. None: no memory."""
 
 
 class SecretInRunInput(ValueError):
@@ -192,9 +224,14 @@ class Runner:
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         jitter: Callable[[], float] = random.random,
         redactor: Redactor | None = None,
+        artifacts: ArtifactStore | None = None,
+        memory: MemoryRecall | None = None,
+        summarizer: Summarizer | None = None,
     ) -> None:
         """`policy` defaults to DefaultToolPolicy (trusted read-only tools allowed, everything
-        else requires approval). Without an `approver`, calls requiring approval are denied."""
+        else requires approval). Without an `approver`, calls requiring approval are denied.
+        Without `artifacts`, large tool results are truncated (M3 behaviour). Without `memory`,
+        nothing is recalled. `summarizer` defaults to the deterministic one."""
         self._store = store
         self._models: ModelResolver = (
             models if isinstance(models, ModelResolver) else SingleProvider(models)
@@ -208,6 +245,9 @@ class Runner:
         self._sleep = sleep
         self._jitter = jitter
         self._redactor = redactor or Redactor()
+        self._artifacts = artifacts
+        self._memory = memory
+        self._summarizer: Summarizer = summarizer or DeterministicSummarizer()
 
     # --- public API -----------------------------------------------------------------------------
 
@@ -239,6 +279,8 @@ class Runner:
             budget=spec.budget,
             ambiguous_policy=policy,
             tools=refs,
+            context=spec.context,
+            memory=spec.memory,
         )
         return await self._append(None, self._new_id(), payload)
 
@@ -358,6 +400,7 @@ class Runner:
         timeout_s = state.budget.attempt_timeout_s
         if remaining is not None:
             timeout_s = min(timeout_s, remaining)
+        specs = tuple(tools[ref.name].descriptor.spec for ref in state.tools)
 
         if state.status is RunStatus.ATTEMPT_FAILED and state.operation_id is not None:
             operation_id = state.operation_id
@@ -365,18 +408,14 @@ class Runner:
         else:
             operation_id = operation_id_for(state.run_id, len(state.turns))
             attempt = 1
+            state = await self._prepare_context(state, provider, operation_id, specs)
+            if state.status.is_terminal:
+                return state
         intent = ModelCallStarted(operation_id=operation_id, attempt=attempt)
         state = await self._append(state, state.run_id, intent)
-        request = ModelRequest(
-            operation_id=operation_id,
-            model=state.deployment.model,
-            input=state.input,
-            instructions=state.instructions,
-            history=self._history(state),
-            tools=tuple(tools[ref.name].descriptor.spec for ref in state.tools),
-            max_output_tokens=state.budget.max_output_tokens,
-            timeout_s=timeout_s,
-        )
+        context = state.context
+        recorded = context if context is not None and context.operation_id == operation_id else None
+        request = assembly.build_request(state, operation_id, specs, timeout_s, recorded)
         try:
             async with asyncio.timeout(timeout_s):
                 response = await provider.generate(request)
@@ -421,33 +460,148 @@ class Runner:
             }
         )
 
-    def _history(self, state: RunState) -> tuple[HistoryItem, ...]:
-        history: list[HistoryItem] = []
-        for turn in state.turns:
-            response = turn.response
-            history.append(
-                AssistantTurn(
-                    content=response.content,
-                    tool_calls=response.tool_calls,
-                    continuation=response.continuation,
-                )
+    # --- context --------------------------------------------------------------------------------
+
+    async def _prepare_context(
+        self,
+        state: RunState,
+        provider: ModelProvider,
+        operation_id: str,
+        specs: tuple[ToolSpec, ...],
+    ) -> RunState:
+        """Recall, compact if needed, and record the context plan for a new logical call."""
+        context = state.context
+        if context is not None and context.operation_id == operation_id:
+            return state  # recorded before a crash; reuse it unchanged
+        state = await self._recall(state)
+        capabilities = provider.descriptor.capabilities
+        factor = assembly.calibration(state)
+        planned = assembly.plan(state, operation_id, specs, capabilities, factor=factor)
+        for _ in range(state.context_policy.max_compactions + 1):
+            if planned.compact_through is None:
+                break
+            state = await self._compact(state, planned.compact_through)
+            planned = assembly.plan(state, operation_id, specs, capabilities, factor=factor)
+        if planned.compact_through is not None:  # unreachable: compactions are bounded
+            planned = assembly.plan(
+                state, operation_id, specs, capabilities, factor=factor, can_compact=False
             )
-            if turn.invocations:
-                history.append(
-                    ToolResultsTurn(
-                        results=tuple(
-                            to_message(
-                                i.call.call_id,
-                                i.call.name,
-                                i.outcome or ToolOutcome.ERROR,
-                                i.parts,
-                                state.tool(i.call.name),
-                            )
-                            for i in turn.invocations
-                        )
-                    )
-                )
-        return tuple(history)
+        planned = await self._verify_count(state, provider, planned, specs)
+        if planned.overflow:
+            estimate, limit = planned.estimate.input_tokens, planned.budget.input_tokens
+            message = (
+                f"mandatory context needs about {estimate} input tokens "
+                f"({planned.estimate.accounting.value}); the input budget is {limit}"
+            )
+            return await self._fail(state, FailureReason.CONTEXT_EXHAUSTED, message, None)
+        for note in planned.notes:
+            log.info("run %s: %s", state.run_id, note)
+        return await self._append(state, state.run_id, planned.record())
+
+    async def _verify_count(
+        self,
+        state: RunState,
+        provider: ModelProvider,
+        planned: assembly.ContextPlan,
+        specs: tuple[ToolSpec, ...],
+    ) -> assembly.ContextPlan:
+        """Replace the estimate with the provider's exact count when it is close to the limit."""
+        limit = planned.budget.input_tokens
+        threshold = state.context_policy.verify_with_provider_at
+        if (
+            limit is None
+            or threshold is None
+            or planned.estimate.input_tokens < limit * threshold
+            or not isinstance(provider, TokenCounter)
+        ):
+            return planned
+        request = assembly.build_request(
+            state, planned.operation_id, specs, state.budget.attempt_timeout_s, planned.record()
+        )
+        try:
+            counted = await provider.count_input_tokens(request)
+        except Exception as exc:  # counting is an optimization; the estimate stands
+            log.warning("run %s: token counting failed (%s)", state.run_id, type(exc).__name__)
+            return planned
+        return assembly.with_count(planned, counted)
+
+    async def _recall(self, state: RunState) -> RunState:
+        access = state.memory_access
+        if (
+            self._memory is None
+            or access is None
+            or not access.read
+            or state.memory_recalled
+            or state.turns
+            or state.context_policy.memory_limit == 0
+        ):
+            return state
+        query = RecallQuery(
+            text=state.input[:2000],
+            scopes=access.read,
+            limit=state.context_policy.memory_limit,
+            as_of=self._clock(),
+            max_chars=state.context_policy.memory_chars or None,
+        )
+        recalled = await self._memory.recall(query)
+        memories = tuple(
+            m.model_copy(update={"content": self._redactor.redact_known(m.content)})
+            for m in recalled
+            if m.scope in access.read  # defence in depth: never trust the backend's filter alone
+        )
+        log.info("run %s: recalled %d memories", state.run_id, len(memories))
+        event = MemoryRecalled(query=query.text, scopes=access.read, memories=memories)
+        return await self._append(state, state.run_id, event)
+
+    async def _compact(self, state: RunState, through: int) -> RunState:
+        previous = state.compactions[-1] if state.compactions else None
+        start = state.compacted_through
+        last = next(
+            (
+                t.response.content
+                for t in reversed(state.turns[start:through])
+                if t.response.content
+            ),
+            "",
+        )
+        request = SummarizeRequest(
+            run_id=state.run_id,
+            compaction=len(state.compactions),
+            from_turn=start,
+            through_turn=through,
+            objective=state.input[:4000],
+            previous=previous,
+            transcript=assembly.transcript(state, start, through),
+            last_assistant=last,
+        )
+        method = self._summarizer.method
+        try:
+            draft = await self._summarizer.summarize(request)
+            summary = merge_summary(previous, draft, through_turn=through, method=method)
+        except Exception as exc:  # any summarizer failure falls back; nothing from it is used
+            reason = str(exc) if isinstance(exc, SummaryRejected) else type(exc).__name__
+            log.warning("run %s: summarizer failed (%s); using fallback", state.run_id, reason)
+            summary = merge_summary(
+                previous,
+                deterministic_draft(request),
+                through_turn=through,
+                method=CompactionMethod.DETERMINISTIC_FALLBACK,
+                fallback_reason=self._redactor.redact(reason)[:500],
+            )
+        summary = summary.model_copy(
+            update={
+                "state": self._redactor.redact_known(summary.state),
+                "items": tuple(
+                    i.model_copy(update={"text": self._redactor.redact_known(i.text)})
+                    for i in summary.items
+                ),
+            }
+        )
+        log.info(
+            "run %s: compacted turns %d-%d (%s)", state.run_id, start, through - 1, summary.method
+        )
+        event = ContextCompacted(compaction=len(state.compactions), summary=summary)
+        return await self._append(state, state.run_id, event)
 
     async def _record_failure(self, state: RunState, failure: ProviderFailure) -> RunState:
         failure = failure.model_copy(update={"message": self._redactor.redact(failure.message)})
@@ -762,9 +916,29 @@ class Runner:
         output: ToolOutput,
         duration_ms: int | None,
     ) -> None:
+        state = writer.state
         parts, truncated, original = finalize(
-            output, limit=writer.state.budget.max_tool_output_chars, redactor=self._redactor
+            output, limit=state.budget.max_tool_output_chars, redactor=self._redactor
         )
+        artifact: ArtifactRef | None = None
+        policy = state.context_policy
+        if self._artifacts is not None and original > min(
+            policy.artifact_threshold_chars, state.budget.max_tool_output_chars
+        ):
+            full = render_parts(redact_parts(output.parts, self._redactor))
+            ref = state.tool(invocation.call.name)
+            try:
+                artifact = await self._artifacts.put(
+                    state.run_id,
+                    full,
+                    source=invocation.invocation_id,
+                    trust=ref.trust if ref is not None else ToolTrust.EXTERNAL,
+                )
+            except Exception as exc:  # storage failure must not lose the result: truncate
+                log.warning("artifact store failed (%s); truncating", type(exc).__name__)
+            else:
+                limit = min(policy.artifact_preview_chars, state.budget.max_tool_output_chars)
+                parts, truncated = (artifact_preview(full, artifact, limit),), True
         log.info(
             "run %s: tool call %s finished: %s (%s ms%s)",
             writer.state.run_id,
@@ -781,6 +955,7 @@ class Runner:
                 truncated=truncated,
                 original_chars=original,
                 duration_ms=duration_ms,
+                artifact=artifact,
             )
         )
 
@@ -790,6 +965,7 @@ class Runner:
             invocation_id=invocation.invocation_id,
             attempt=max(attempt, 1),
             deadline=state.deadline,
+            memory=state.memory_access,
         )
 
     # --- helpers --------------------------------------------------------------------------------
