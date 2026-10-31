@@ -4,7 +4,7 @@ Each milestone ships something verifiable and ends at its exit criteria, not on 
 
 | Milestone | Goal | Exit criteria |
 |---|---|---|
-| **M0: Foundation** (current) | Repo, tooling, docs, decision records, dev process | `make check` passes locally and in CI. Product, architecture and ADRs are documented. No platform code. |
+| **M0: Foundation** (done) | Repo, tooling, docs, decision records, dev process | `make check` passes locally and in CI. Product, architecture and ADRs are documented. No platform code. |
 | **M1: Runtime core** | Explicit run state machine, event log, storage port (in-memory + SQLite), model port with a scripted fake provider, resume from the log | Crash and resume tests pass. Import-boundary tests enforce NFR-7. ADR-0004 and ADR-0005 are accepted or revised. Plan: [m1-runtime-core.md](../plans/m1-runtime-core.md). |
 | **M2: First real provider** | One real model adapter, budgets (NFR-6), basic trajectory inspection | An agent completes a simple task against a real model. Secrets are never persisted (tested). First behavioral evals are dogfooded. |
 | **M3: Tools and sandboxing** | Typed tool definitions, permission policy, sandboxed execution | Tool calls are validated, recorded and replay-safe. Policy denials are tested. A minimal coding-agent demo works. |
