@@ -43,10 +43,14 @@ from hollis.runtime.events import (
 )
 from hollis.runtime.model import (
     CallOutcome,
+    DeploymentRef,
     FailureKind,
     ModelCallError,
     ModelProvider,
     ModelRequest,
+    ModelResolver,
+    SingleProvider,
+    require_text_generation,
 )
 from hollis.runtime.policy import (
     MAX_RETRY_WAIT_S,
@@ -66,20 +70,28 @@ class RunSpec(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     model: str = Field(min_length=1)
+    """Logical model (deployment) id, resolved through the model resolver."""
     input: str
     instructions: str | None = None
     budget: RunBudget
     ambiguous_policy: AmbiguousOutcomePolicy | None = None
-    """None selects the default for the provider's capabilities."""
+    """None selects the default for the deployment's idempotency behaviour."""
 
 
 class SecretInRunInput(ValueError):
     """Run input or instructions contain a registered secret value; nothing was persisted."""
 
 
-class ProviderMismatch(Exception):
-    def __init__(self, run_id: UUID, recorded: str, actual: str) -> None:
-        super().__init__(f"run {run_id} was created for provider {recorded!r}, not {actual!r}")
+class DeploymentChanged(Exception):
+    """The run's deployment now resolves to a different identity; resuming is refused."""
+
+    def __init__(self, run_id: UUID, recorded: DeploymentRef, actual: DeploymentRef) -> None:
+        self.recorded = recorded
+        self.actual = actual
+        changed = sorted(
+            name for name, value in recorded.model_dump().items() if getattr(actual, name) != value
+        )
+        super().__init__(f"run {run_id}: deployment {recorded.deployment!r} changed ({changed})")
 
 
 def operation_id_for(run_id: UUID, call_index: int = 0) -> str:
@@ -95,7 +107,7 @@ class Runner:
     def __init__(
         self,
         store: RunStore,
-        provider: ModelProvider,
+        models: ModelResolver | ModelProvider,
         *,
         clock: Callable[[], datetime] = _utc_now,
         new_id: Callable[[], UUID] = uuid4,
@@ -104,7 +116,9 @@ class Runner:
         redactor: Redactor | None = None,
     ) -> None:
         self._store = store
-        self._provider = provider
+        self._models: ModelResolver = (
+            models if isinstance(models, ModelResolver) else SingleProvider(models)
+        )
         self._clock = clock
         self._new_id = new_id
         self._sleep = sleep
@@ -112,19 +126,26 @@ class Runner:
         self._redactor = redactor or Redactor()
 
     async def create(self, spec: RunSpec) -> RunState:
+        """Validate and persist a new run. Nothing is persisted if validation fails."""
+        # Resolving first applies routing policy and registers the deployment's secrets.
+        descriptor = self._models.resolve(spec.model).descriptor
         if self._redactor.contains_secret(spec.input) or (
             spec.instructions is not None and self._redactor.contains_secret(spec.instructions)
         ):
             raise SecretInRunInput("run input or instructions contain a registered secret")
-        capabilities = self._provider.capabilities
+        require_text_generation(
+            descriptor,
+            has_instructions=spec.instructions is not None,
+            max_output_tokens=spec.budget.max_output_tokens,
+        )
         policy = spec.ambiguous_policy or default_ambiguous_policy(
-            provider_deduplicates=capabilities.deduplicates_requests
+            provider_deduplicates=descriptor.deduplicates_requests
         )
         payload = RunCreated(
             model=spec.model,
             input=spec.input,
             instructions=spec.instructions,
-            provider=capabilities.name,
+            deployment=descriptor.ref,
             budget=spec.budget,
             ambiguous_policy=policy,
         )
@@ -135,14 +156,14 @@ class Runner:
         state = await load_run(self._store, run_id)
         if state.status.is_terminal:
             return state
-        provider = self._provider.capabilities.name
-        if state.provider != provider:
-            raise ProviderMismatch(run_id, state.provider, provider)
+        provider = self._models.resolve(state.model)
+        if provider.descriptor.ref != state.deployment:
+            raise DeploymentChanged(run_id, state.deployment, provider.descriptor.ref)
         while not state.status.is_terminal:
-            state = await self._advance(state)
+            state = await self._advance(state, provider)
         return state
 
-    async def _advance(self, state: RunState) -> RunState:
+    async def _advance(self, state: RunState, provider: ModelProvider) -> RunState:
         match state.status:
             case RunStatus.MODEL_RESPONDED:
                 return await self._append(state, state.run_id, RunCompleted())
@@ -156,11 +177,11 @@ class Runner:
                     ),
                 )
             case RunStatus.ATTEMPT_FAILED:
-                return await self._after_failure(state)
+                return await self._after_failure(state, provider)
             case _:  # PENDING
-                return await self._attempt(state)
+                return await self._attempt(state, provider)
 
-    async def _after_failure(self, state: RunState) -> RunState:
+    async def _after_failure(self, state: RunState, provider: ModelProvider) -> RunState:
         failure = state.last_failure
         if failure is None:  # unreachable: ATTEMPT_FAILED always records a failure
             raise AssertionError("attempt_failed without last_failure")
@@ -185,9 +206,9 @@ class Runner:
             return await self._fail(state, FailureReason.BUDGET_EXHAUSTED, message, failure)
         log.info("run %s: retrying after %.2fs (%s)", state.run_id, delay, failure.kind)
         await self._sleep(delay)
-        return await self._attempt(state)
+        return await self._attempt(state, provider)
 
-    async def _attempt(self, state: RunState) -> RunState:
+    async def _attempt(self, state: RunState, provider: ModelProvider) -> RunState:
         remaining = self._remaining(state)
         if remaining is not None and remaining <= 0:
             return await self._fail(state, FailureReason.BUDGET_EXHAUSTED, "deadline reached", None)
@@ -200,7 +221,7 @@ class Runner:
         state = await self._append(state, state.run_id, intent)
         request = ModelRequest(
             operation_id=operation_id,
-            model=state.model,
+            model=state.deployment.model,
             input=state.input,
             instructions=state.instructions,
             max_output_tokens=state.budget.max_output_tokens,
@@ -208,7 +229,7 @@ class Runner:
         )
         try:
             async with asyncio.timeout(timeout_s):
-                response = await self._provider.generate(request)
+                response = await provider.generate(request)
         except ModelCallError as exc:
             return await self._record_failure(state, ProviderFailure.from_error(exc))
         except TimeoutError:

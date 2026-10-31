@@ -6,7 +6,7 @@ response) and whether a retry can be safe. See ADR-0007.
 """
 
 from enum import StrEnum
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -32,6 +32,7 @@ class StopReason(StrEnum):
     STOP_SEQUENCE = "stop_sequence"
     REFUSAL = "refusal"
     CONTEXT_WINDOW_EXCEEDED = "context_window_exceeded"
+    CONTENT_FILTERED = "content_filtered"
     OTHER = "other"
 
 
@@ -42,6 +43,9 @@ class ModelResponse(_Frozen):
     served_model: str | None = None
     """Model identifier the provider reports having used."""
     provider_request_id: str | None = None
+    """Request identifier from the provider's response headers, for support and correlation."""
+    provider_response_id: str | None = None
+    """Identifier of the response object itself (e.g. a message or completion id)."""
     omitted_block_types: tuple[str, ...] = ()
     """Non-text content block types present in the provider response but not mapped."""
 
@@ -50,6 +54,7 @@ class ModelRequest(_Frozen):
     operation_id: str = Field(min_length=1)
     """Idempotency key: identical for every attempt of one logical model call."""
     model: str = Field(min_length=1)
+    """The deployment's wire model identifier."""
     input: str
     instructions: str | None = None
     max_output_tokens: int = Field(ge=1)
@@ -78,6 +83,8 @@ class FailureKind(StrEnum):
     TIMEOUT = "timeout"
     SERVER_ERROR = "server_error"
     CONNECTION_LOST = "connection_lost"
+    INVALID_RESPONSE = "invalid_response"
+    """A response arrived but could not be interpreted; it may have been generated and billed."""
     INTERRUPTED = "interrupted"
     """Assigned by the runtime when an attempt has an intent but no recorded outcome."""
 
@@ -96,6 +103,7 @@ _AMBIGUOUS = frozenset(
         FailureKind.TIMEOUT,
         FailureKind.SERVER_ERROR,
         FailureKind.CONNECTION_LOST,
+        FailureKind.INVALID_RESPONSE,
         FailureKind.INTERRUPTED,
     }
 )
@@ -136,16 +144,129 @@ class ModelCallError(Exception):
         return self.kind.outcome
 
 
-class ProviderCapabilities(_Frozen):
-    name: str = Field(min_length=1)
-    """Stable provider identifier, recorded in each run so recovery uses the same provider."""
+class Locality(StrEnum):
+    """Where a deployment's endpoint lives, for routing policy and auditing (ADR-0013)."""
+
+    LOCAL = "local"
+    """Loopback on the same machine."""
+    PRIVATE = "private"
+    """Operator-controlled network: private cloud, enterprise or on-premises."""
+    EXTERNAL = "external"
+    """A third-party service outside the operator's infrastructure."""
+
+
+class Task(StrEnum):
+    """Model task families. Each family gets its own port; M2 implements text generation."""
+
+    TEXT_GENERATION = "text_generation"
+
+
+class UsageReporting(StrEnum):
+    EXACT = "exact"
+    APPROXIMATE = "approximate"
+    NONE = "none"
+
+
+class TextCapabilities(_Frozen):
+    """What a deployment supports for text generation. Declared, then validated before calls."""
+
+    system_prompt: bool = True
+    max_output_tokens: int | None = Field(default=None, ge=1)
+    reasoning_effort: tuple[str, ...] = ()
+    """Effort values the deployment accepts; empty means effort must not be sent."""
+    usage_reporting: UsageReporting = UsageReporting.EXACT
+    structured_output: bool = False
+    tools: bool = False
+    streaming: bool = False
+    image_input: bool = False
+
+
+class ModelCapabilities(_Frozen):
+    tasks: frozenset[Task] = frozenset({Task.TEXT_GENERATION})
+    text: TextCapabilities | None = TextCapabilities()
+
+
+class DeploymentRef(_Frozen):
+    """The identity of a model deployment, recorded in each run (ADR-0011).
+
+    Recovery refuses to continue a run if the resolved deployment's identity has changed.
+    """
+
+    deployment: str = Field(min_length=1)
+    """Logical model id that runs reference."""
+    provider: str = Field(min_length=1)
+    """Informational provider label (e.g. anthropic, vllm, ollama); never selects code."""
+    protocol: str = Field(min_length=1)
+    model: str = Field(min_length=1)
+    """Identifier sent on the wire."""
+    endpoint: str | None = None
+    """Endpoint origin (scheme://host:port), without path, query or credentials."""
+    locality: Locality
     deduplicates_requests: bool
-    """True only if the provider guarantees that repeating a request with the same operation
-    id cannot produce a second generation. Determines the default ambiguous-outcome policy."""
+    """True only if repeating a request with the same operation id cannot produce a second
+    generation. Determines the default ambiguous-outcome policy."""
+
+
+class DeploymentDescriptor(DeploymentRef):
+    capabilities: ModelCapabilities = ModelCapabilities()
+
+    @property
+    def ref(self) -> DeploymentRef:
+        return DeploymentRef.model_validate(self.model_dump(exclude={"capabilities"}))
+
+
+class CapabilityMismatch(ValueError):
+    """A run needs something its deployment does not support; nothing was persisted."""
+
+
+def require_text_generation(
+    descriptor: DeploymentDescriptor, *, has_instructions: bool, max_output_tokens: int
+) -> None:
+    caps = descriptor.capabilities
+    text = caps.text
+    problems: list[str] = []
+    if Task.TEXT_GENERATION not in caps.tasks or text is None:
+        problems.append("text generation is not supported")
+    else:
+        if has_instructions and not text.system_prompt:
+            problems.append("instructions (system prompt) are not supported")
+        if text.max_output_tokens is not None and max_output_tokens > text.max_output_tokens:
+            problems.append(
+                f"max_output_tokens {max_output_tokens} exceeds the limit {text.max_output_tokens}"
+            )
+    if problems:
+        raise CapabilityMismatch(f"deployment {descriptor.deployment!r}: " + "; ".join(problems))
 
 
 class ModelProvider(Protocol):
+    """Text-generation port. One instance serves one deployment."""
+
     @property
-    def capabilities(self) -> ProviderCapabilities: ...
+    def descriptor(self) -> DeploymentDescriptor: ...
 
     async def generate(self, request: ModelRequest) -> ModelResponse: ...
+
+
+@runtime_checkable
+class ModelResolver(Protocol):
+    """Resolves a logical model id to the provider for its deployment (the gateway, ADR-0011)."""
+
+    def resolve(self, model: str) -> ModelProvider: ...
+
+
+class UnknownModel(LookupError):
+    def __init__(self, model: str) -> None:
+        self.model = model
+        super().__init__(f"no deployment named {model!r}")
+
+
+class SingleProvider:
+    """A resolver for exactly one provider, addressed by its deployment id."""
+
+    def __init__(self, provider: ModelProvider) -> None:
+        self._provider = provider
+
+    def resolve(self, model: str) -> ModelProvider:
+        if model != self._provider.descriptor.deployment:
+            raise UnknownModel(model)
+        return self._provider

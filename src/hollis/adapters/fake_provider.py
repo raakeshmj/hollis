@@ -20,13 +20,21 @@ from collections import Counter
 from collections.abc import Iterable
 
 from hollis.runtime.model import (
+    DeploymentDescriptor,
+    Locality,
     ModelCallError,
     ModelRequest,
     ModelResponse,
-    ProviderCapabilities,
 )
 
-FAKE_CAPABILITIES = ProviderCapabilities(name="scripted-fake", deduplicates_requests=True)
+FAKE_DESCRIPTOR = DeploymentDescriptor(
+    deployment="fake",
+    provider="hollis",
+    protocol="scripted",
+    model="fake",
+    locality=Locality.LOCAL,
+    deduplicates_requests=True,
+)
 
 
 class ScriptExhausted(AssertionError):
@@ -58,14 +66,14 @@ class ScriptedModelProvider:
         script: Iterable[ModelResponse | ModelCallError],
         *,
         per_attempt: bool = False,
-        capabilities: ProviderCapabilities = FAKE_CAPABILITIES,
+        descriptor: DeploymentDescriptor = FAKE_DESCRIPTOR,
     ) -> None:
         """`per_attempt=False` (default): one scripted outcome per operation id, deduplicated.
         `per_attempt=True`: failures consume a new entry on every call until a response is
         produced, after which that response is deduplicated."""
         self._script = list(script)
         self._per_attempt = per_attempt
-        self._capabilities = capabilities
+        self._descriptor = descriptor
         self._requests: dict[str, ModelRequest] = {}
         self._outcomes: dict[str, ModelResponse | ModelCallError] = {}
         self._rejections = 0
@@ -73,8 +81,8 @@ class ScriptedModelProvider:
         self.requests: list[ModelRequest] = []
 
     @property
-    def capabilities(self) -> ProviderCapabilities:
-        return self._capabilities
+    def descriptor(self) -> DeploymentDescriptor:
+        return self._descriptor
 
     @property
     def invocations(self) -> int:

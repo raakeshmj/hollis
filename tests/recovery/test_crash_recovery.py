@@ -19,7 +19,7 @@ from uuid import UUID
 
 import pytest
 
-from hollis.adapters.fake_provider import FAKE_CAPABILITIES, ScriptedModelProvider
+from hollis.adapters.fake_provider import FAKE_DESCRIPTOR, ScriptedModelProvider
 from hollis.adapters.sqlite_store import SqliteRunStore
 from hollis.runtime.events import (
     EventEnvelope,
@@ -29,11 +29,11 @@ from hollis.runtime.events import (
     ModelResponseRecorded,
 )
 from hollis.runtime.model import (
+    DeploymentDescriptor,
     FailureKind,
     ModelCallError,
     ModelProvider,
     ModelResponse,
-    ProviderCapabilities,
 )
 from hollis.runtime.policy import RunBudget
 from hollis.runtime.runner import Runner, RunSpec
@@ -51,7 +51,7 @@ SPEC = RunSpec(
 FIRST = ModelResponse(content="first generation")
 SECOND = ModelResponse(content="a second generation must never be recorded")
 OVERLOADED = ModelCallError(FailureKind.OVERLOADED, "overloaded")
-NON_DEDUP = ProviderCapabilities(name="scripted-fake", deduplicates_requests=False)
+NON_DEDUP = FAKE_DESCRIPTOR.model_copy(update={"deduplicates_requests": False})
 
 
 async def _no_sleep(_: float) -> None:
@@ -98,9 +98,9 @@ def _script(boundary: str) -> list[ModelResponse | ModelCallError]:
 
 
 def _provider(
-    boundary: str, capabilities: ProviderCapabilities = FAKE_CAPABILITIES
+    boundary: str, descriptor: DeploymentDescriptor = FAKE_DESCRIPTOR
 ) -> ScriptedModelProvider:
-    return ScriptedModelProvider(_script(boundary), per_attempt=True, capabilities=capabilities)
+    return ScriptedModelProvider(_script(boundary), per_attempt=True, descriptor=descriptor)
 
 
 def _count(log: list[EventEnvelope], event_type: EventType) -> int:

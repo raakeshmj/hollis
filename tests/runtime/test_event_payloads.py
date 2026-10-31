@@ -66,6 +66,7 @@ def test_ambiguous_kinds_are_exactly_those_that_may_have_generated() -> None:
         FailureKind.TIMEOUT,
         FailureKind.SERVER_ERROR,
         FailureKind.CONNECTION_LOST,
+        FailureKind.INVALID_RESPONSE,
         FailureKind.INTERRUPTED,
     }
     permanent = {k for k in FailureKind if not k.retryable}

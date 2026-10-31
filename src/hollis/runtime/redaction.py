@@ -29,14 +29,18 @@ _PATTERNS: tuple[re.Pattern[str], ...] = (
 
 class Redactor:
     def __init__(self, secrets: Iterable[str | SecretStr] = ()) -> None:
-        values: set[str] = set()
+        self._secrets: tuple[str, ...] = ()
         for secret in secrets:
-            value = secret.get_secret_value() if isinstance(secret, SecretStr) else secret
-            if len(value) < MIN_SECRET_LENGTH:
-                raise ValueError(f"secrets must be at least {MIN_SECRET_LENGTH} characters")
-            values.add(value)
+            self.register(secret)
+
+    def register(self, secret: str | SecretStr) -> None:
+        """Add a secret value. The gateway registers each credential when it resolves it,
+        before any request using it is sent."""
+        value = secret.get_secret_value() if isinstance(secret, SecretStr) else secret
+        if len(value) < MIN_SECRET_LENGTH:
+            raise ValueError(f"secrets must be at least {MIN_SECRET_LENGTH} characters")
         # Longest first, so a secret containing another is replaced whole.
-        self._secrets = tuple(sorted(values, key=len, reverse=True))
+        self._secrets = tuple(sorted({*self._secrets, value}, key=len, reverse=True))
 
     def contains_secret(self, text: str) -> bool:
         """Whether `text` contains a registered secret value (patterns are not consulted)."""

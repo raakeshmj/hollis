@@ -4,6 +4,7 @@ import pytest
 from hypothesis import assume, given
 from hypothesis import strategies as st
 
+from hollis.adapters.fake_provider import FAKE_DESCRIPTOR
 from hollis.runtime.events import (
     AnyPayload,
     EventEnvelope,
@@ -51,7 +52,7 @@ def test_retries_are_counted_as_attempts() -> None:
 
 def test_run_state_carries_configuration_from_run_created() -> None:
     state = fold(build_log(RUN, [created(budget=RunBudget(max_output_tokens=9, deadline_s=60))]))
-    assert state.provider == "scripted-fake"
+    assert state.deployment == FAKE_DESCRIPTOR.ref
     assert state.budget.max_output_tokens == 9
     assert state.deadline is not None
     assert (state.deadline - state.created_at).total_seconds() == 60

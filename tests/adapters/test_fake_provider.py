@@ -1,7 +1,7 @@
 import pytest
 
 from hollis.adapters.fake_provider import (
-    FAKE_CAPABILITIES,
+    FAKE_DESCRIPTOR,
     OperationIdReused,
     ScriptedModelProvider,
     ScriptExhausted,
@@ -134,5 +134,5 @@ async def test_exhausted_script_fails_loudly() -> None:
 
 def test_declares_that_it_deduplicates() -> None:
     provider: ModelProvider = ScriptedModelProvider([])  # checked by pyright
-    assert provider.capabilities == FAKE_CAPABILITIES
-    assert provider.capabilities.deduplicates_requests
+    assert provider.descriptor == FAKE_DESCRIPTOR
+    assert provider.descriptor.deduplicates_requests

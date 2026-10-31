@@ -20,7 +20,7 @@ from hollis.runtime.events import (
     RunCreated,
     RunFailed,
 )
-from hollis.runtime.model import CallOutcome, FailureKind, ModelResponse
+from hollis.runtime.model import CallOutcome, DeploymentRef, FailureKind, ModelResponse
 from hollis.runtime.policy import AmbiguousOutcomePolicy, RunBudget
 
 
@@ -102,7 +102,7 @@ class RunState(_Frozen):
     model: str
     input: str
     instructions: str | None
-    provider: str
+    deployment: DeploymentRef
     budget: RunBudget
     ambiguous_policy: AmbiguousOutcomePolicy
     operation_id: str | None = None
@@ -138,7 +138,7 @@ def apply(state: RunState | None, event: EventEnvelope) -> RunState:
             model=payload.model,
             input=payload.input,
             instructions=payload.instructions,
-            provider=payload.provider,
+            deployment=payload.deployment,
             budget=payload.budget,
             ambiguous_policy=payload.ambiguous_policy,
         )

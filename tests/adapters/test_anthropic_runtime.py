@@ -57,7 +57,7 @@ async def test_successful_run_records_provider_metadata(store: RunStore) -> None
     final = await _execute(store, mock)
 
     assert final.status is RunStatus.COMPLETED
-    assert final.provider == "anthropic"
+    assert final.deployment.provider == "anthropic"
     assert final.ambiguous_policy is AmbiguousOutcomePolicy.FAIL  # no provider idempotency
     assert final.response is not None
     assert final.response.provider_request_id == "req_live_like_1"

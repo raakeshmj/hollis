@@ -6,7 +6,7 @@ from uuid import UUID
 
 import pytest
 
-from hollis.adapters.fake_provider import ScriptedModelProvider
+from hollis.adapters.fake_provider import FAKE_DESCRIPTOR, ScriptedModelProvider
 from hollis.adapters.memory_store import InMemoryRunStore
 from hollis.runtime.events import (
     EventEnvelope,
@@ -15,15 +15,19 @@ from hollis.runtime.events import (
     ModelCallFailed,
 )
 from hollis.runtime.model import (
+    CapabilityMismatch,
     FailureKind,
+    Locality,
     ModelCallError,
+    ModelCapabilities,
     ModelRequest,
     ModelResponse,
-    ProviderCapabilities,
+    TextCapabilities,
+    UnknownModel,
     Usage,
 )
 from hollis.runtime.policy import AmbiguousOutcomePolicy, RunBudget
-from hollis.runtime.runner import ProviderMismatch, Runner, RunSpec, operation_id_for
+from hollis.runtime.runner import DeploymentChanged, Runner, RunSpec, operation_id_for
 from hollis.runtime.state import RunStatus
 from hollis.runtime.store import ConcurrencyConflict, RunStore, load_run
 from tests.support.events import T0
@@ -31,7 +35,7 @@ from tests.support.events import T0
 BUDGET = RunBudget(max_output_tokens=64, max_attempts=3, attempt_timeout_s=30)
 SPEC = RunSpec(model="fake", input="hello", instructions="be brief", budget=BUDGET)
 REPLY = ModelResponse(content="hi", usage=Usage(input_tokens=5, output_tokens=2))
-NON_DEDUP = ProviderCapabilities(name="scripted-fake", deduplicates_requests=False)
+NON_DEDUP = FAKE_DESCRIPTOR.model_copy(update={"deduplicates_requests": False})
 
 
 class FakeTime:
@@ -88,7 +92,7 @@ async def test_happy_path(store: RunStore) -> None:
     runner = _runner(store, provider)
     created = await runner.create(SPEC)
     assert created.status is RunStatus.PENDING
-    assert created.provider == "scripted-fake"
+    assert created.deployment == FAKE_DESCRIPTOR.ref
 
     final = await runner.execute(created.run_id)
 
@@ -150,15 +154,15 @@ async def test_injected_clock_and_ids_make_logs_deterministic() -> None:
 async def test_default_ambiguous_policy_follows_provider_capabilities(
     deduplicates: bool, expected: AmbiguousOutcomePolicy
 ) -> None:
-    caps = ProviderCapabilities(name="p", deduplicates_requests=deduplicates)
-    created = await _runner(
-        InMemoryRunStore(), ScriptedModelProvider([], capabilities=caps)
-    ).create(SPEC)
+    caps = FAKE_DESCRIPTOR.model_copy(update={"deduplicates_requests": deduplicates})
+    created = await _runner(InMemoryRunStore(), ScriptedModelProvider([], descriptor=caps)).create(
+        SPEC
+    )
     assert created.ambiguous_policy is expected
 
 
 async def test_explicit_policy_overrides_the_default() -> None:
-    provider = ScriptedModelProvider([], capabilities=NON_DEDUP)
+    provider = ScriptedModelProvider([], descriptor=NON_DEDUP)
     spec = SPEC.model_copy(update={"ambiguous_policy": AmbiguousOutcomePolicy.RETRY})
     created = await _runner(InMemoryRunStore(), provider).create(spec)
     assert created.ambiguous_policy is AmbiguousOutcomePolicy.RETRY
@@ -276,9 +280,7 @@ async def test_runtime_enforces_the_attempt_timeout_on_a_hung_provider(store: Ru
 
     budget = BUDGET.model_copy(update={"attempt_timeout_s": 0.01, "max_attempts": 1})
     spec = SPEC.model_copy(update={"budget": budget})
-    final = await load_run(
-        store, await _run(_runner(store, Hung([], capabilities=NON_DEDUP)), spec)
-    )
+    final = await load_run(store, await _run(_runner(store, Hung([], descriptor=NON_DEDUP)), spec))
     assert final.last_failure is not None
     assert final.last_failure.kind is FailureKind.TIMEOUT
     assert final.failure is not None
@@ -294,9 +296,7 @@ async def test_runtime_enforces_the_attempt_timeout_on_a_hung_provider(store: Ru
 async def test_ambiguous_failure_is_not_retried_under_fail_policy(
     store: RunStore, kind: FailureKind
 ) -> None:
-    provider = ScriptedModelProvider(
-        [_error(kind), REPLY], per_attempt=True, capabilities=NON_DEDUP
-    )
+    provider = ScriptedModelProvider([_error(kind), REPLY], per_attempt=True, descriptor=NON_DEDUP)
     final = await load_run(store, await _run(_runner(store, provider)))
 
     assert final.ambiguous_policy is AmbiguousOutcomePolicy.FAIL
@@ -307,7 +307,7 @@ async def test_ambiguous_failure_is_not_retried_under_fail_policy(
 
 async def test_ambiguous_failure_is_retried_under_retry_policy(store: RunStore) -> None:
     provider = ScriptedModelProvider(
-        [_error(FailureKind.TIMEOUT), REPLY], per_attempt=True, capabilities=NON_DEDUP
+        [_error(FailureKind.TIMEOUT), REPLY], per_attempt=True, descriptor=NON_DEDUP
     )
     spec = SPEC.model_copy(update={"ambiguous_policy": AmbiguousOutcomePolicy.RETRY})
     final = await load_run(store, await _run(_runner(store, provider), spec))
@@ -322,12 +322,12 @@ async def test_unexpected_exception_leaves_run_in_flight_then_resume_applies_pol
         async def generate(self, request: ModelRequest) -> ModelResponse:
             raise RuntimeError("adapter bug")
 
-    run = await _runner(store, Broken([], capabilities=NON_DEDUP)).create(SPEC)
+    run = await _runner(store, Broken([], descriptor=NON_DEDUP)).create(SPEC)
     with pytest.raises(RuntimeError):
-        await _runner(store, Broken([], capabilities=NON_DEDUP)).execute(run.run_id)
+        await _runner(store, Broken([], descriptor=NON_DEDUP)).execute(run.run_id)
     assert (await load_run(store, run.run_id)).status is RunStatus.MODEL_CALL_IN_FLIGHT
 
-    fresh = ScriptedModelProvider([REPLY], capabilities=NON_DEDUP)
+    fresh = ScriptedModelProvider([REPLY], descriptor=NON_DEDUP)
     final = await _runner(store, fresh).execute(run.run_id)
 
     log = await store.read(run.run_id)
@@ -358,12 +358,12 @@ async def test_execute_on_terminal_run_is_a_noop(
     assert untouched.invocations == 0
 
 
-async def test_resuming_with_a_different_provider_is_refused(store: RunStore) -> None:
+async def test_resuming_after_the_deployment_changed_is_refused(store: RunStore) -> None:
     run = await _runner(store, ScriptedModelProvider([])).create(SPEC)
     other = ScriptedModelProvider(
-        [REPLY], capabilities=ProviderCapabilities(name="other", deduplicates_requests=True)
+        [REPLY], descriptor=FAKE_DESCRIPTOR.model_copy(update={"endpoint": "http://other:8000"})
     )
-    with pytest.raises(ProviderMismatch):
+    with pytest.raises(DeploymentChanged):
         await _runner(store, other).execute(run.run_id)
     assert other.invocations == 0
 
@@ -414,3 +414,45 @@ async def test_racing_runners_record_one_response_and_one_conflicts(store: RunSt
     assert (await load_run(store, run.run_id)).status is RunStatus.COMPLETED
     # The loser lost its intent append, so it never reached the provider.
     assert provider.invocations == 1
+
+
+# --- deployment resolution and capability validation -----------------------------------
+
+
+async def test_unknown_model_is_rejected_before_persisting() -> None:
+    store = InMemoryRunStore()
+    with pytest.raises(UnknownModel):
+        await _runner(store, ScriptedModelProvider([])).create(
+            SPEC.model_copy(update={"model": "not-configured"})
+        )
+
+
+@pytest.mark.parametrize(
+    ("text", "spec_update", "message"),
+    [
+        (TextCapabilities(system_prompt=False), {}, "system prompt"),
+        (TextCapabilities(max_output_tokens=32), {}, "exceeds the limit 32"),
+        (None, {}, "text generation is not supported"),
+    ],
+)
+async def test_unsupported_capabilities_are_rejected_before_persisting(
+    text: TextCapabilities | None, spec_update: dict[str, object], message: str
+) -> None:
+    descriptor = FAKE_DESCRIPTOR.model_copy(update={"capabilities": ModelCapabilities(text=text)})
+    runner = _runner(InMemoryRunStore(), ScriptedModelProvider([], descriptor=descriptor))
+    with pytest.raises(CapabilityMismatch, match=message):
+        await runner.create(SPEC.model_copy(update=spec_update))
+
+
+async def test_deployment_change_names_the_changed_fields(store: RunStore) -> None:
+    run = await _runner(store, ScriptedModelProvider([])).create(SPEC)
+    moved = FAKE_DESCRIPTOR.model_copy(update={"model": "fake-v2", "locality": Locality.EXTERNAL})
+    with pytest.raises(DeploymentChanged, match=r"\['locality', 'model'\]"):
+        await _runner(store, ScriptedModelProvider([], descriptor=moved)).execute(run.run_id)
+
+
+async def test_requests_carry_the_deployments_wire_model(store: RunStore) -> None:
+    descriptor = FAKE_DESCRIPTOR.model_copy(update={"model": "org/model-7b-instruct"})
+    provider = ScriptedModelProvider([REPLY], descriptor=descriptor)
+    await _run(_runner(store, provider))
+    assert provider.requests[0].model == "org/model-7b-instruct"

@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 
 from hypothesis import strategies as st
 
+from hollis.adapters.fake_provider import FAKE_DESCRIPTOR
 from hollis.runtime.events import (
     AnyPayload,
     EventEnvelope,
@@ -32,7 +33,7 @@ def created(**overrides: Any) -> RunCreated:
     fields: dict[str, Any] = {
         "model": "fake",
         "input": "hello",
-        "provider": "scripted-fake",
+        "deployment": FAKE_DESCRIPTOR.ref,
         "budget": BUDGET,
         "ambiguous_policy": AmbiguousOutcomePolicy.RETRY,
     }

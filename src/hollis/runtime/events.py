@@ -22,7 +22,13 @@ from pydantic import (
     model_validator,
 )
 
-from hollis.runtime.model import CallOutcome, FailureKind, ModelCallError, ModelResponse
+from hollis.runtime.model import (
+    CallOutcome,
+    DeploymentRef,
+    FailureKind,
+    ModelCallError,
+    ModelResponse,
+)
 from hollis.runtime.policy import AmbiguousOutcomePolicy, RunBudget
 
 
@@ -44,7 +50,7 @@ class RunCreated(_Payload):
     model: str = Field(min_length=1)
     input: str
     instructions: str | None = None
-    provider: str = Field(min_length=1)
+    deployment: DeploymentRef
     budget: RunBudget
     ambiguous_policy: AmbiguousOutcomePolicy
 

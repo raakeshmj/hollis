@@ -13,7 +13,7 @@ from anthropic import AsyncAnthropic
 from pydantic import SecretStr
 
 from hollis.adapters.anthropic_provider import (
-    ANTHROPIC_CAPABILITIES,
+    DEFAULT_DESCRIPTOR,
     MAX_NONSTREAMING_OUTPUT_TOKENS,
     AnthropicProvider,
     AnthropicSettings,
@@ -55,8 +55,8 @@ async def _fail(mock: MockAnthropic, request: ModelRequest | None = None) -> Mod
 
 def test_declares_no_provider_side_deduplication() -> None:
     provider: ModelProvider = MockAnthropic().provider()  # checked by pyright
-    assert provider.capabilities == ANTHROPIC_CAPABILITIES
-    assert not provider.capabilities.deduplicates_requests
+    assert provider.descriptor == DEFAULT_DESCRIPTOR
+    assert not provider.descriptor.deduplicates_requests
 
 
 def test_missing_api_key_raises_a_clear_error(monkeypatch: pytest.MonkeyPatch) -> None:

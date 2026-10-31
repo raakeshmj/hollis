@@ -31,16 +31,25 @@ from pydantic import BaseModel, ConfigDict, SecretStr
 
 from hollis.adapters.credentials import require_env_secret
 from hollis.runtime.model import (
+    DeploymentDescriptor,
     FailureKind,
+    Locality,
     ModelCallError,
     ModelRequest,
     ModelResponse,
-    ProviderCapabilities,
     StopReason,
     Usage,
 )
 
-ANTHROPIC_CAPABILITIES = ProviderCapabilities(name="anthropic", deduplicates_requests=False)
+DEFAULT_DESCRIPTOR = DeploymentDescriptor(
+    deployment="claude-opus-5-5",
+    provider="anthropic",
+    protocol="anthropic-messages",
+    model="claude-opus-5-5",
+    endpoint="https://api.anthropic.com",
+    locality=Locality.EXTERNAL,
+    deduplicates_requests=False,
+)
 API_KEY_ENV = "ANTHROPIC_API_KEY"
 
 MAX_NONSTREAMING_OUTPUT_TOKENS = 21_333
@@ -100,8 +109,8 @@ class AnthropicProvider:
         return cls.from_api_key(require_env_secret(API_KEY_ENV), settings)
 
     @property
-    def capabilities(self) -> ProviderCapabilities:
-        return ANTHROPIC_CAPABILITIES
+    def descriptor(self) -> DeploymentDescriptor:
+        return DEFAULT_DESCRIPTOR
 
     async def aclose(self) -> None:
         await self._client.close()
