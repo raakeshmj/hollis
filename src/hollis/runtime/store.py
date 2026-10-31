@@ -49,6 +49,14 @@ class RunNotFound(StoreError):
         super().__init__(f"run {run_id} not found")
 
 
+class StoreUnavailable(StoreError):
+    """The backing store could not be reached or locked (e.g. busy timeout exceeded)."""
+
+
+class CorruptEvent(StoreError):
+    """A stored event could not be decoded. Never skipped silently."""
+
+
 class RunStore(Protocol):
     async def append(
         self, run_id: UUID, expected_version: int, events: Sequence[EventEnvelope]
