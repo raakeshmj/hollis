@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+dist/
+*.egg-info/
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+.coverage
+
+# Local Claude Code overrides
+.claude/settings.local.json
+
+# OS
+.DS_Store
