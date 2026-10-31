@@ -24,6 +24,9 @@ openai-compatible = [
 mcp = [
     "mcp>=2.3,<3",
 ]
+pdf = [
+    "pypdf>=5,<7",
+]
 
 [build-system]
 requires = ["uv_build>=0.12.23,<0.13.0"]
@@ -31,7 +34,7 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
-    "hollis[anthropic,openai-compatible,mcp]",  # adapter tests always run in dev and CI
+    "hollis[anthropic,openai-compatible,mcp,pdf]",  # adapter tests always run in dev and CI
     "hypothesis>=6.170.14",
     "pyright>=1.1.414",
     "pytest>=9.2.0",

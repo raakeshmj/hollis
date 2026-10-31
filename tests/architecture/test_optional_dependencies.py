@@ -21,8 +21,10 @@ CORE_MODULES = [
     "hollis.adapters.local_embeddings",
     "hollis.runtime.embedding",
     "hollis.runtime.text",
+    "hollis.knowledge.ingest",
+    "hollis.adapters.sqlite_knowledge",
 ]
-OPTIONAL = ("anthropic", "httpx2", "opentelemetry", "mcp")
+OPTIONAL = ("anthropic", "httpx2", "opentelemetry", "mcp", "pypdf")
 
 
 def _loaded_after(code: str) -> set[str]:
