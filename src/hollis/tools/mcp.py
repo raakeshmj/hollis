@@ -307,7 +307,7 @@ class McpTool:
         self._descriptor = ToolDescriptor(
             name=hollis_name(server.config.name, definition.name),
             version=definition_digest(definition).removeprefix("sha256:")[:16],
-            description=origin + (policy.description or definition.description or ""),
+            description=origin + _bounded(policy.description or definition.description or ""),
             input_schema=cast(dict[str, JsonValue], definition.input_schema),
             effect=policy.effect,
             idempotent=policy.idempotent,
@@ -344,6 +344,16 @@ class McpTool:
 
     async def reconcile(self, context: ToolContext) -> ToolOutput | None:
         return None
+
+
+MAX_DESCRIPTION_CHARS = 2000
+
+
+def _bounded(description: str) -> str:
+    """Server descriptions are untrusted model input; cap their size."""
+    if len(description) <= MAX_DESCRIPTION_CHARS:
+        return description
+    return description[:MAX_DESCRIPTION_CHARS] + " [description truncated by Hollis]"
 
 
 def to_output(result: CallToolResult) -> ToolOutput:

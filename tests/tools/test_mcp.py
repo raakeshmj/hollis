@@ -308,3 +308,13 @@ async def test_streamable_http_over_loopback_sends_the_configured_credential() -
         await mcp.aclose()
         server.should_exit = True
         await serving
+
+
+async def test_oversized_server_descriptions_are_capped() -> None:
+    server = mcp_servers.build(description="A" * 50_000)
+    mcp = McpServer(_config({"echo": McpToolPolicy(effect=ToolEffect.READ_ONLY)}), target=server)
+    await mcp.connect()
+    description = mcp.tools["echo"].descriptor.description
+    assert len(description) < 2200
+    assert description.endswith("[description truncated by Hollis]")
+    await mcp.aclose()
