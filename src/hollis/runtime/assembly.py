@@ -9,7 +9,7 @@ Levers, applied only when the estimate exceeds `compact_at` of the budget, cheap
 lossy first:
 1. replace artifact-backed tool results of older turns with references (retrievable on demand);
 2. compact older turns into a summary (ledger rebuilt from events, notes carried forward);
-3. drop recalled memories, lowest ranked first, if the request still does not fit;
+3. drop retrieved passages, then recalled memories, lowest ranked first, if it still does not fit;
 4. otherwise report an overflow: the mandatory context does not fit and the run fails rather
    than silently discarding it.
 Mandatory context: instructions, input, tool specs, the latest turn and the latest summary.
@@ -62,6 +62,7 @@ class ContextPlan:
     """When set, compact turns before this index first, then plan again."""
     overflow: bool = False
     notes: tuple[str, ...] = field(default=())
+    passages: tuple[str, ...] = field(default=())
 
     def record(self) -> ContextAssembled:
         return ContextAssembled(
@@ -69,6 +70,7 @@ class ContextPlan:
             history_start=self.history_start,
             cleared=self.cleared,
             memories=self.memories,
+            passages=self.passages,
             estimate=self.estimate,
             budget=self.budget,
             excluded=self.excluded,
@@ -101,12 +103,15 @@ def plan(
     start = state.compacted_through
     turns = len(state.turns)
     memories = [m.memory_id for m in state.memories]
+    passages = [p.key for p in state.passages]
     cleared: list[str] = []
     excluded: list[str] = []
     compact_through: int | None = None
 
     def estimate() -> TokenEstimate:
-        request = _request(state, operation_id, start, set(cleared), tuple(memories), tools)
+        request = _request(
+            state, operation_id, start, set(cleared), tuple(memories), tools, tuple(passages)
+        )
         heuristic = estimate_parts(
             instructions=request.instructions,
             context=render_context(request.context) if request.context else None,
@@ -150,7 +155,12 @@ def plan(
                     if current.input_tokens <= limit:
                         break
         if compact_through is None:
-            # 3. Recalled memories are optional: drop the lowest ranked until it fits.
+            # 3. Retrieved passages and recalled memories are optional: drop passages first
+            # (the knowledge tools can fetch them again), then memories, lowest ranked first.
+            while current.input_tokens > limit and passages:
+                dropped = passages.pop()
+                excluded.append(f"passage {dropped}: dropped to fit the input budget")
+                current = estimate()
             while current.input_tokens > limit and memories:
                 dropped = memories.pop()
                 excluded.append(f"memory {dropped}: dropped to fit the input budget")
@@ -167,6 +177,7 @@ def plan(
         history_start=start,
         cleared=tuple(cleared),
         memories=tuple(memories),
+        passages=tuple(passages),
         estimate=current,
         budget=budget,
         excluded=tuple(excluded),
@@ -190,6 +201,7 @@ def with_count(plan_: ContextPlan, counted: int) -> ContextPlan:
         history_start=plan_.history_start,
         cleared=plan_.cleared,
         memories=plan_.memories,
+        passages=plan_.passages,
         estimate=estimate,
         budget=plan_.budget,
         excluded=plan_.excluded,
@@ -217,6 +229,7 @@ def build_request(
             set(context.cleared),
             context.memories,
             tools,
+            context.passages,
         )
     return request.model_copy(update={"timeout_s": timeout_s})
 
@@ -228,10 +241,17 @@ def _request(
     cleared: set[str],
     memories: tuple[str, ...],
     tools: tuple[ToolSpec, ...],
+    passages: tuple[str, ...] = (),
     *,
     summary: bool = True,
 ) -> ModelRequest:
     blocks: list[ContextBlock] = []
+    wanted = set(passages)
+    blocks.extend(
+        ContextBlock(kind=ContextKind.KNOWLEDGE, source=f"knowledge:{p.key}", text=p.render())
+        for p in state.passages
+        if p.key in wanted
+    )
     included = set(memories)
     blocks.extend(
         ContextBlock(kind=ContextKind.MEMORY, source=f"memory:{m.memory_id}", text=m.render())

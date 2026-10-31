@@ -16,6 +16,7 @@ from uuid import UUID
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, JsonValue
 
 from hollis.runtime.conversation import TOOL_NAME_PATTERN, ToolCall, ToolSpec
+from hollis.runtime.knowledge import KnowledgeAccess
 from hollis.runtime.memory import MemoryAccess
 
 
@@ -165,6 +166,8 @@ class ToolContext(_Frozen):
     deadline: AwareDatetime | None = None
     memory: MemoryAccess | None = None
     """Memory namespaces granted to the run (from RunCreated), for memory tools."""
+    knowledge: KnowledgeAccess | None = None
+    """Knowledge collections and labels granted to the run, for knowledge tools."""
 
 
 @runtime_checkable

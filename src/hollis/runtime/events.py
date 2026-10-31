@@ -25,6 +25,8 @@ from pydantic import (
 
 from hollis.runtime.artifacts import ArtifactRef
 from hollis.runtime.context import CompactionSummary, ContextBudget, ContextPolicy, TokenEstimate
+from hollis.runtime.grounding import GroundingReport
+from hollis.runtime.knowledge import KnowledgeAccess, RetrievedPassage
 from hollis.runtime.memory import MemoryAccess, RecalledMemory
 from hollis.runtime.model import (
     CallOutcome,
@@ -49,6 +51,8 @@ class EventType(StrEnum):
     MEMORY_RECALLED = "memory_recalled"
     CONTEXT_COMPACTED = "context_compacted"
     CONTEXT_ASSEMBLED = "context_assembled"
+    KNOWLEDGE_RETRIEVED = "knowledge_retrieved"
+    ANSWER_GROUNDED = "answer_grounded"
     RUN_COMPLETED = "run_completed"
     RUN_FAILED = "run_failed"
 
@@ -70,6 +74,8 @@ class RunCreated(_Payload):
     context: ContextPolicy = ContextPolicy()
     memory: MemoryAccess | None = None
     """Memory namespaces granted to this run by the application."""
+    knowledge: KnowledgeAccess | None = None
+    """Knowledge collections and labels granted to this run by the application."""
 
 
 class ModelCallStarted(_Payload):
@@ -197,6 +203,23 @@ class ContextCompacted(_Payload):
     summary: CompactionSummary
 
 
+class KnowledgeRetrieved(_Payload):
+    """Knowledge passages retrieved into the run's context at its start, exactly as shown."""
+
+    type: Literal[EventType.KNOWLEDGE_RETRIEVED] = EventType.KNOWLEDGE_RETRIEVED
+    query: str
+    collections: tuple[str, ...]
+    passages: tuple[RetrievedPassage, ...] = ()
+
+
+class AnswerGrounded(_Payload):
+    """A deterministic grounding check of a final answer against the run's evidence."""
+
+    type: Literal[EventType.ANSWER_GROUNDED] = EventType.ANSWER_GROUNDED
+    operation_id: str = Field(min_length=1)
+    report: GroundingReport
+
+
 class ContextAssembled(_Payload):
     """How the context of one logical model call was assembled, recorded before its first
     attempt. Every attempt of the call sends the request this plan describes."""
@@ -209,6 +232,8 @@ class ContextAssembled(_Payload):
     """Invocations whose (artifact-backed) results are replaced by a reference."""
     memories: tuple[str, ...] = ()
     """Recalled memories included, by id."""
+    passages: tuple[str, ...] = ()
+    """Retrieved knowledge passages included, by citation key."""
     estimate: TokenEstimate
     budget: ContextBudget
     excluded: tuple[str, ...] = ()
@@ -253,6 +278,8 @@ AnyPayload = (
     | MemoryRecalled
     | ContextCompacted
     | ContextAssembled
+    | KnowledgeRetrieved
+    | AnswerGrounded
     | RunCompleted
     | RunFailed
 )
@@ -261,7 +288,7 @@ EventPayload = Annotated[AnyPayload, Field(discriminator="type")]
 # Current payload schema version per event type. Bump a version only together with an
 # upcaster in _UPCASTERS that converts the previous version's payload dict.
 CURRENT_SCHEMA_VERSIONS: Mapping[EventType, int] = {
-    EventType.RUN_CREATED: 4,
+    EventType.RUN_CREATED: 5,
     EventType.MODEL_CALL_STARTED: 1,
     EventType.MODEL_RESPONSE_RECORDED: 4,
     EventType.MODEL_CALL_FAILED: 1,
@@ -271,7 +298,9 @@ CURRENT_SCHEMA_VERSIONS: Mapping[EventType, int] = {
     EventType.TOOL_RESULT_RECORDED: 2,
     EventType.MEMORY_RECALLED: 1,
     EventType.CONTEXT_COMPACTED: 1,
-    EventType.CONTEXT_ASSEMBLED: 1,
+    EventType.CONTEXT_ASSEMBLED: 2,
+    EventType.KNOWLEDGE_RETRIEVED: 1,
+    EventType.ANSWER_GROUNDED: 1,
     EventType.RUN_COMPLETED: 1,
     EventType.RUN_FAILED: 2,
 }
@@ -291,7 +320,8 @@ type Upcaster = Callable[[dict[str, Any]], dict[str, Any]]
 def _added_defaulted_fields(payload: dict[str, Any]) -> dict[str, Any]:
     """For changes that only add fields with defaults: M3 (v2 -> v3: tools, tool calls) and M4
     (RunCreated v3 -> v4: context policy, memory access; ModelResponseRecorded v3 -> v4:
-    `Usage.cache_included_in_input`; ToolResultRecorded v1 -> v2: artifact)."""
+    `Usage.cache_included_in_input`; ToolResultRecorded v1 -> v2: artifact) and M5 (RunCreated
+    v4 -> v5: knowledge access; ContextAssembled v1 -> v2: passages)."""
     return payload
 
 
@@ -302,6 +332,8 @@ _UPCASTERS: Mapping[tuple[EventType, int], Upcaster] = {
     (EventType.RUN_CREATED, 3): _added_defaulted_fields,
     (EventType.MODEL_RESPONSE_RECORDED, 3): _added_defaulted_fields,
     (EventType.TOOL_RESULT_RECORDED, 1): _added_defaulted_fields,
+    (EventType.RUN_CREATED, 4): _added_defaulted_fields,
+    (EventType.CONTEXT_ASSEMBLED, 1): _added_defaulted_fields,
 }
 
 

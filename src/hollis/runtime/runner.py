@@ -58,9 +58,11 @@ from hollis.runtime.context import (
 )
 from hollis.runtime.conversation import ToolSpec
 from hollis.runtime.events import (
+    AnswerGrounded,
     AnyPayload,
     ContextCompacted,
     FailureReason,
+    KnowledgeRetrieved,
     MemoryRecalled,
     ModelCallFailed,
     ModelCallStarted,
@@ -76,6 +78,9 @@ from hollis.runtime.events import (
     ToolResultRecorded,
     new_event,
 )
+from hollis.runtime.grounding import check as check_grounding
+from hollis.runtime.grounding import tool_evidence
+from hollis.runtime.knowledge import KnowledgeAccess, KnowledgeQuery, KnowledgeRetrieval
 from hollis.runtime.memory import MemoryAccess, MemoryRecall, RecallQuery
 from hollis.runtime.model import (
     CallOutcome,
@@ -161,6 +166,8 @@ class RunSpec(BaseModel):
     context: ContextPolicy = ContextPolicy()
     memory: MemoryAccess | None = None
     """Memory namespaces this run may read and write. None: no memory."""
+    knowledge: KnowledgeAccess | None = None
+    """Knowledge collections and labels this run may read. None: no knowledge."""
 
 
 class SecretInRunInput(ValueError):
@@ -227,6 +234,7 @@ class Runner:
         artifacts: ArtifactStore | None = None,
         memory: MemoryRecall | None = None,
         summarizer: Summarizer | None = None,
+        knowledge: KnowledgeRetrieval | None = None,
     ) -> None:
         """`policy` defaults to DefaultToolPolicy (trusted read-only tools allowed, everything
         else requires approval). Without an `approver`, calls requiring approval are denied.
@@ -248,6 +256,7 @@ class Runner:
         self._artifacts = artifacts
         self._memory = memory
         self._summarizer: Summarizer = summarizer or DeterministicSummarizer()
+        self._knowledge = knowledge
 
     # --- public API -----------------------------------------------------------------------------
 
@@ -281,6 +290,7 @@ class Runner:
             tools=refs,
             context=spec.context,
             memory=spec.memory,
+            knowledge=spec.knowledge,
         )
         return await self._append(None, self._new_id(), payload)
 
@@ -348,6 +358,8 @@ class Runner:
     async def _after_response(self, state: RunState) -> RunState:
         response = state.response
         if response is None or not response.tool_calls:
+            if response is not None and state.grounding is None:
+                state = await self._ground(state, response.content)
             return await self._append(state, state.run_id, RunCompleted())
         ids = [c.call_id for c in response.tool_calls]
         if len(set(ids)) != len(ids) or not all(ids):
@@ -474,6 +486,7 @@ class Runner:
         if context is not None and context.operation_id == operation_id:
             return state  # recorded before a crash; reuse it unchanged
         state = await self._recall(state)
+        state = await self._retrieve_knowledge(state)
         capabilities = provider.descriptor.capabilities
         factor = assembly.calibration(state)
         planned = assembly.plan(state, operation_id, specs, capabilities, factor=factor)
@@ -552,6 +565,61 @@ class Runner:
         log.info("run %s: recalled %d memories", state.run_id, len(memories))
         event = MemoryRecalled(query=query.text, scopes=access.read, memories=memories)
         return await self._append(state, state.run_id, event)
+
+    async def _retrieve_knowledge(self, state: RunState) -> RunState:
+        access = state.knowledge_access
+        policy = state.context_policy
+        if (
+            self._knowledge is None
+            or access is None
+            or not access.collections
+            or state.knowledge_retrieved
+            or state.turns
+            or policy.knowledge_limit == 0
+        ):
+            return state
+        query = KnowledgeQuery(
+            text=state.input[:4000] or " ",
+            access=access,
+            limit=policy.knowledge_limit,
+            max_chars=policy.knowledge_chars or None,
+            exclude_flagged=not policy.knowledge_include_flagged,
+            as_of=self._clock(),
+        )
+        retrieved = await self._knowledge.retrieve(query)
+        passages = tuple(
+            p.model_copy(update={"key": f"S{i}", "text": self._redactor.redact_known(p.text)})
+            for i, p in enumerate(
+                (p for p in retrieved if access.can_see(p.collection, p.labels)), start=1
+            )  # defence in depth: never trust the backend's filter alone
+        )
+        log.info("run %s: retrieved %d knowledge passages", state.run_id, len(passages))
+        event = KnowledgeRetrieved(
+            query=query.text, collections=access.collections, passages=passages
+        )
+        return await self._append(state, state.run_id, event)
+
+    async def _ground(self, state: RunState, answer: str) -> RunState:
+        if not state.context_policy.check_grounding:
+            return state
+        evidence = {p.key: p.text for p in state.passages}
+        for turn in state.turns:
+            for invocation in turn.invocations:
+                evidence.update(tool_evidence(render_parts(invocation.parts)))
+        if not evidence:
+            return state
+        report = check_grounding(answer, evidence)
+        log.info(
+            "run %s: grounding %d claims, %d supported, %d fabricated citations",
+            state.run_id,
+            len(report.claims),
+            sum(1 for c in report.claims if c.support.value == "supported"),
+            len(report.fabricated),
+        )
+        operation = state.operation_id or self._operation(state)
+        return await self._append(
+            state, state.run_id, AnswerGrounded(operation_id=operation, report=report)
+        )
 
     async def _compact(self, state: RunState, through: int) -> RunState:
         previous = state.compactions[-1] if state.compactions else None
@@ -966,6 +1034,7 @@ class Runner:
             attempt=max(attempt, 1),
             deadline=state.deadline,
             memory=state.memory_access,
+            knowledge=state.knowledge_access,
         )
 
     # --- helpers --------------------------------------------------------------------------------

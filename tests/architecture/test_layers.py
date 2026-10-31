@@ -30,7 +30,15 @@ def test_runtime_does_not_depend_on_tool_implementations() -> None:
     offending = {
         (file, module)
         for file, module in _imports(SRC / "hollis" / "runtime")
-        if module.startswith(("hollis.tools", "hollis.adapters", "hollis.gateway", "hollis.memory"))
+        if module.startswith(
+            (
+                "hollis.tools",
+                "hollis.adapters",
+                "hollis.gateway",
+                "hollis.memory",
+                "hollis.knowledge",
+            )
+        )
     }
     assert offending == set()
 
@@ -43,5 +51,27 @@ def test_memory_depends_on_ports_not_on_adapters_gateway_or_the_runner() -> None
         for file, module in _imports(SRC / "hollis" / "memory")
         if module.startswith(("hollis.adapters", "hollis.gateway", "hollis.runtime.runner"))
         or module.split(".")[0] in {"anthropic", "httpx2", "mcp", "sqlite3"}
+    }
+    assert offending == set()
+
+
+def test_knowledge_depends_on_ports_not_on_adapters_gateway_runner_or_memory() -> None:
+    """Knowledge is storage- and provider-independent and separate from memory (ADR-0024)."""
+    offending = {
+        (file, module)
+        for file, module in _imports(SRC / "hollis" / "knowledge")
+        if module.startswith(
+            ("hollis.adapters", "hollis.gateway", "hollis.runtime.runner", "hollis.memory")
+        )
+        or module.split(".")[0] in {"anthropic", "httpx2", "mcp", "sqlite3"}
+    }
+    assert offending == set()
+
+
+def test_memory_does_not_depend_on_knowledge() -> None:
+    offending = {
+        (file, module)
+        for file, module in _imports(SRC / "hollis" / "memory")
+        if module.startswith("hollis.knowledge")
     }
     assert offending == set()

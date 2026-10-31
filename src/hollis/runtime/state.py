@@ -24,11 +24,13 @@ from hollis.runtime.artifacts import ArtifactRef
 from hollis.runtime.context import CompactionSummary, ContextPolicy, TokenEstimate
 from hollis.runtime.conversation import ToolCall
 from hollis.runtime.events import (
+    AnswerGrounded,
     ContextAssembled,
     ContextCompacted,
     EventEnvelope,
     EventType,
     FailureReason,
+    KnowledgeRetrieved,
     MemoryRecalled,
     ModelCallFailed,
     ModelCallStarted,
@@ -43,6 +45,8 @@ from hollis.runtime.events import (
     ToolOutcome,
     ToolResultRecorded,
 )
+from hollis.runtime.grounding import GroundingReport
+from hollis.runtime.knowledge import KnowledgeAccess, RetrievedPassage
 from hollis.runtime.memory import MemoryAccess, RecalledMemory
 from hollis.runtime.model import CallOutcome, DeploymentRef, FailureKind, ModelResponse
 from hollis.runtime.policy import AmbiguousOutcomePolicy, RunBudget
@@ -100,6 +104,7 @@ TRANSITIONS: Mapping[tuple[RunStatus | None, EventType], RunStatus] = {
     (S.PENDING, E.RUN_FAILED): S.FAILED,
     (S.PENDING, E.MEMORY_RECALLED): S.PENDING,
     (S.PENDING, E.CONTEXT_ASSEMBLED): S.PENDING,
+    (S.PENDING, E.KNOWLEDGE_RETRIEVED): S.PENDING,
     (S.MODEL_CALL_IN_FLIGHT, E.MODEL_RESPONSE_RECORDED): S.MODEL_RESPONDED,
     (S.MODEL_CALL_IN_FLIGHT, E.MODEL_CALL_FAILED): S.ATTEMPT_FAILED,
     (S.ATTEMPT_FAILED, E.MODEL_CALL_STARTED): S.MODEL_CALL_IN_FLIGHT,
@@ -107,6 +112,7 @@ TRANSITIONS: Mapping[tuple[RunStatus | None, EventType], RunStatus] = {
     (S.MODEL_RESPONDED, E.RUN_COMPLETED): S.COMPLETED,
     (S.MODEL_RESPONDED, E.TOOL_CALL_DECIDED): S.TOOL_CALLS,
     (S.MODEL_RESPONDED, E.RUN_FAILED): S.FAILED,
+    (S.MODEL_RESPONDED, E.ANSWER_GROUNDED): S.MODEL_RESPONDED,
     **{(S.TOOL_CALLS, event): S.TOOL_CALLS for event in _TOOL_EVENTS},
     (S.TOOL_CALLS, E.CONTEXT_COMPACTED): S.TOOL_CALLS,
     (S.TOOL_CALLS, E.CONTEXT_ASSEMBLED): S.TOOL_CALLS,
@@ -218,6 +224,12 @@ class RunState(_Frozen):
     memories: tuple[RecalledMemory, ...] = ()
     """Memories recalled at run start, in ranked order."""
     compactions: tuple[CompactionSummary, ...] = ()
+    knowledge_access: KnowledgeAccess | None = None
+    knowledge_retrieved: bool = False
+    passages: tuple[RetrievedPassage, ...] = ()
+    """Knowledge passages retrieved at run start, in rank order."""
+    grounding: GroundingReport | None = None
+    """The grounding check of the latest final answer, if one was recorded."""
     context: ContextAssembled | None = None
     """The assembled context of the current (or most recent) logical model call."""
 
@@ -275,6 +287,7 @@ def apply(state: RunState | None, event: EventEnvelope) -> RunState:
             tools=payload.tools,
             context_policy=payload.context,
             memory_access=payload.memory,
+            knowledge_access=payload.knowledge,
         )
 
     if state is None:  # unreachable: next_status only allows RunCreated without a run
@@ -285,6 +298,7 @@ def apply(state: RunState | None, event: EventEnvelope) -> RunState:
             update |= _model_call_started(state, op, attempt)
         case ModelResponseRecorded(operation_id=op, attempt=attempt, response=response):
             _require_current_attempt(state, op, attempt)
+            update["grounding"] = None
             turn_index = len(state.turns)
             invocations = tuple(
                 Invocation(
@@ -325,6 +339,14 @@ def apply(state: RunState | None, event: EventEnvelope) -> RunState:
             update |= _context_compacted(state, payload)
         case ContextAssembled():
             update |= _context_assembled(state, payload)
+        case KnowledgeRetrieved():
+            update |= _knowledge_retrieved(state, payload)
+        case AnswerGrounded(operation_id=op, report=report):
+            if op != state.operation_id or state.grounding is not None:
+                raise InvalidEventSequence("grounding is recorded once, for the current response")
+            if state.response is None or state.response.tool_calls:
+                raise InvalidEventSequence("grounding applies to a final answer")
+            update["grounding"] = report
         case RunFailed(operation_id=op, reason=reason, message=message, kind=kind):
             if state.operation_id is not None and op != state.operation_id:
                 raise InvalidEventSequence(f"operation_id {op!r} != {state.operation_id!r}")
@@ -618,4 +640,24 @@ def _context_assembled(state: RunState, event: ContextAssembled) -> dict[str, An
     recalled = {m.memory_id for m in state.memories}
     if not set(event.memories) <= recalled:
         raise InvalidEventSequence("context includes memories that were not recalled")
+    if not set(event.passages) <= {p.key for p in state.passages}:
+        raise InvalidEventSequence("context includes passages that were not retrieved")
     return {"context": event}
+
+
+def _knowledge_retrieved(state: RunState, event: KnowledgeRetrieved) -> dict[str, Any]:
+    if state.knowledge_retrieved or state.turns or state.context is not None:
+        raise InvalidEventSequence("knowledge is retrieved once, before the first model call")
+    access = state.knowledge_access
+    if access is None or not set(event.collections) <= set(access.collections):
+        raise InvalidEventSequence("retrieval from collections not granted to the run")
+    for index, passage in enumerate(event.passages, start=1):
+        if passage.key != f"S{index}":
+            raise InvalidEventSequence("passage keys must be S1..Sn in order")
+        if passage.collection not in event.collections or not access.can_see(
+            passage.collection, passage.labels
+        ):
+            raise InvalidEventSequence(f"passage {passage.key} is not visible to the run's grant")
+    if len({p.chunk_id for p in event.passages}) != len(event.passages):
+        raise InvalidEventSequence("duplicate retrieved passage")
+    return {"knowledge_retrieved": True, "passages": event.passages}

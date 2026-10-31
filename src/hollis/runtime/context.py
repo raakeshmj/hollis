@@ -60,6 +60,14 @@ class ContextPolicy(_Frozen):
     """Tool results longer than this are stored whole as artifacts (when the runner has an
     artifact store); the run log and context get a preview and a reference."""
     artifact_preview_chars: int = Field(default=2000, ge=0, le=100_000)
+    knowledge_limit: int = Field(default=6, ge=0, le=50)
+    """Passages retrieved into context at run start (0 disables; tools still work)."""
+    knowledge_chars: int = Field(default=8000, ge=0, le=200_000)
+    knowledge_include_flagged: bool = False
+    """Include chunks flagged as instruction-like in automatic context (tools always show them,
+    with a warning)."""
+    check_grounding: bool = True
+    """Record a grounding report for final answers when the run had knowledge evidence."""
 
 
 class TokenAccounting(StrEnum):
