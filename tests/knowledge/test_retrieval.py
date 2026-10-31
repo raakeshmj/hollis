@@ -175,3 +175,28 @@ async def test_superseded_versions_never_surface(
     passages = await retriever.retrieve(_q("CUDA out of memory fix"))
     assert all("halve the batch size" not in p.text for p in passages)
     assert passages[0].source_version == 2
+
+
+async def test_exact_first_outranks_term_frequency(store: SqliteKnowledgeStore) -> None:
+    """Under weighted fusion, normalized lexical and dense scores can outvote the exact
+    retriever; the guarantee keeps the exact identifier first anyway. (Under RRF the exact
+    retriever's own vote already suffices in practice.)"""
+    embedder = HashingEmbedder(dimensions=256)
+    kb = KnowledgeBase(store, embedder=embedder)
+    await kb.create_collection("ops")
+    await kb.ingest_bytes("ops", "codes.md", b"# Codes\n\nE4021 quota exhausted.\n")
+    noisy = (
+        b"# Timeouts\n\n"
+        + b"Timeout error retry: a timeout error means retry the timeout error. " * 8
+    )
+    await kb.ingest_bytes("ops", "timeouts.md", noisy)
+    access = KnowledgeAccess(collections=("ops",))
+    query = _q("E4021 timeout error retry", access)
+    unguarded = KnowledgeRetriever(
+        store, embedder=embedder, config=RetrievalConfig(fusion="weighted", exact_first=False)
+    )
+    assert "E4021" not in (await unguarded.retrieve(query))[0].text  # the failure mode
+    guarded = KnowledgeRetriever(
+        store, embedder=embedder, config=RetrievalConfig(fusion="weighted")
+    )
+    assert "E4021" in (await guarded.retrieve(query))[0].text
