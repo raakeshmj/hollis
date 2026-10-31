@@ -6,14 +6,14 @@ IDs are stable. Cite them from ADRs, plans and tests (for example, "covers NFR-2
 
 | ID | Requirement | Milestone |
 |---|---|---|
-| FR-1 | Define an agent in Python: instructions, model selection, tools and limits | M1–M3 |
-| FR-2 | Execute a run to completion, failure or cancellation, with an explicit state at every point | M1 (completion, failure); cancellation later |
+| FR-1 | Define an agent in Python: instructions, model selection, tools and limits | M1–M3 (M3: `RunSpec.tools` plus a tool catalog) |
+| FR-2 | Execute a run to completion, failure or cancellation, with an explicit state at every point | M1 (completion, failure), M3 (multi-turn tool loop, suspension awaiting approval); cancellation later |
 | FR-3 | Persist every run as an ordered record of events (model calls, tool calls, results, state transitions) | M1 |
 | FR-4 | Resume an interrupted run from its persisted record. Never re-invoke a side effect whose result is durably recorded. Retry unrecorded outcomes under the same operation id, with no exactly-once claim ([ADR-0006](../decisions/0006-model-call-execution-semantics.md)). | M1 |
 | FR-5 | Call models through a provider-neutral interface, so swapping providers needs no agent code changes | M1 (fake), M2 (gateway: Anthropic Messages and OpenAI-compatible protocols) |
 | FR-14 | Configure model deployments independently of providers: protocol, endpoint (cloud, private, enterprise, localhost, on-prem), wire model id, auth by reference, TLS and proxy, declared capabilities | M2 ([ADR-0011](../decisions/0011-model-gateway-and-deployments.md)) |
-| FR-6 | Define tools with typed, validated inputs and outputs | M3 |
-| FR-7 | Execute tools under an explicit permission and sandbox policy | M3 |
+| FR-6 | Define tools with typed, validated inputs and outputs | **M3 (offline):** `@tool` derives one schema for model and validation; MCP tools validate against the server schema ([ADR-0015](../decisions/0015-tool-definitions-policy-and-approval.md)) |
+| FR-7 | Execute tools under an explicit permission and sandbox policy | **M3, partially:** deterministic policy and approval are enforced in the event fold ([ADR-0014](../decisions/0014-tool-runtime-and-durable-lifecycle.md)); isolation is declared per tool, but **no sandbox backend exists** ([ADR-0016](../decisions/0016-execution-isolation.md)) |
 | FR-8 | Manage context: select, truncate and summarize what is sent to the model within a budget | M4 |
 | FR-9 | Persistent memory and knowledge retrieval behind a storage adapter | M4 |
 | FR-10 | CLI to start, list, inspect and resume runs | M5 |
@@ -28,9 +28,9 @@ IDs are stable. Cite them from ADRs, plans and tests (for example, "covers NFR-2
 | NFR-1 **Correctness** | State transitions are validated. Illegal transitions are impossible through the public API. |
 | NFR-2 **Recoverability** | A process crash at any point leaves a run resumable or explicitly failed, never silently corrupted. |
 | NFR-3 **Determinism in tests** | The runtime can be driven by a scripted fake provider, so runs are reproducible without network access. |
-| NFR-4 **Security** | Tools run with least privilege. Secrets never appear in persisted events or logs. Model output is treated as untrusted input. **Partially met (M2):** credentials and registered secrets never reach events or logs; arbitrary secrets inside user-supplied text are not detected. See [below](#data-persistence-and-secret-handling). |
+| NFR-4 **Security** | Tools run with least privilege. Secrets never appear in persisted events or logs. Model output is treated as untrusted input. **Partially met (M2):** credentials and registered secrets never reach events or logs; arbitrary secrets inside user-supplied text are not detected. See [below](#data-persistence-and-secret-handling). **M3:** tools are least-privilege by default policy (only trusted read-only tools run without approval); registered secrets are redacted from tool arguments and results; external tool output is framed as untrusted data. Tool execution is **not sandboxed**. |
 | NFR-5 **Explicit state** | No hidden global state. Everything that affects a run is in its configuration or event record. |
-| NFR-6 **Resource limits** | Every run has enforceable budgets (steps, tokens, wall-clock time, cost) and stops cleanly when one is exceeded. **M2:** attempts, output tokens, per-attempt timeout and run deadline are enforced ([ADR-0007](../decisions/0007-failure-classification-retries-and-ambiguous-policy.md)); cost and input-token budgets are not (no reliable pricing source, no pre-estimation). |
+| NFR-6 **Resource limits** | Every run has enforceable budgets (steps, tokens, wall-clock time, cost) and stops cleanly when one is exceeded. **M2:** attempts, output tokens, per-attempt timeout and run deadline are enforced; **M3:** model turns, tool calls per run and per turn, tool parallelism, tool timeouts and tool output size ([ADR-0007](../decisions/0007-failure-classification-retries-and-ambiguous-policy.md)); cost and input-token budgets are not (no reliable pricing source, no pre-estimation). |
 | NFR-7 **Vendor neutrality** | The core imports no model-vendor or storage-vendor SDK. Adapters do. Enforced by tests from M1. |
 | NFR-8 **Local-first** | The full feature set works on one machine with no external services other than the chosen model provider. |
 | NFR-9 **Observability** | Every run can be inspected after the fact: what was sent, what came back, what ran, how long it took and what it cost. |
@@ -45,6 +45,7 @@ This section is the canonical statement of what Hollis persists and what it guar
 - Run `input` and `instructions`, **verbatim**. They are never rewritten, because recovery must resend the identical request.
 - Logical model id, the deployment reference (provider label, protocol, wire model, endpoint origin, locality, idempotency), budget and ambiguous-outcome policy. Credentials are never included.
 - Model response content (registered secret values removed), stop reason, usage, served model, provider request id.
+- Model tool calls and provider continuations (registered secret values removed), tool decisions with validated arguments, approvals (approver label and reason), and tool results after redaction and truncation (M3).
 - Per-attempt failures (`ModelCallFailed`) and run failures (`RunFailed`): kind, provider request id, and a sanitized, redacted message.
 
 **Status of the M2 requirements** (set at the end of M1):
@@ -61,5 +62,6 @@ This section is the canonical statement of what Hollis persists and what it guar
 - **Arbitrary secrets in user-supplied text are not detected.** Only registered values are refused in input. Pattern-shaped or unknown-shape secrets in input are persisted verbatim.
 - `extra="forbid"` rejects undeclared fields only. It doesn't inspect string values.
 - Model responses can contain sensitive data that isn't a registered secret. It's stored as returned.
+- The same applies to tool arguments and tool results: only registered secrets are removed. A tool that returns unregistered sensitive data has it persisted.
 - SQLite files are created with mode `0600` but are **not encrypted at rest**.
 - No deletion or retention mechanism exists yet (requirement 5).

@@ -44,3 +44,18 @@ Status: in progress (2026-10-31), owned end to end. Branch `m3-tools`, cut from 
 ## Out of scope
 
 A verified sandbox backend, declarative HTTP tools, the MCP resources/prompts/sampling/elicitation surfaces, `tools/list_changed` subscriptions, an artifact store for large results, an approval UI, RAG and memory, multi-agent.
+
+## Implementation notes (end of M3)
+
+Implemented as designed, with these deviations and findings:
+
+- **Deadline guard added after review.** The first implementation could start a tool after the run deadline had passed, if the deadline expired during approval. `Runner` now fails the run with `budget_exhausted` before executing authorized calls past the deadline (`a57cb3a`, with a test).
+- **Deferred approvals are re-presented.** When an approver returns None, each later `execute` pass asks it again for still-pending calls. Approvers must therefore be safe to call repeatedly for the same binding. `resolve_approval` remains the out-of-band path.
+- **Synchronous `@tool` functions can't be interrupted.** They run in a worker thread. On timeout the run records `timeout` (read-only) or `ambiguous`, but the thread runs to completion in the background. Prefer async tools for anything slow.
+- **MCP `tools/list_changed` isn't subscribed** (ADR-0017). Definition changes are detected on reconnect or `refresh()`.
+- **`tests/support/http.py` was renamed to `mock_http.py`.** Run as a module for the stdio MCP test server, it shadowed the stdlib `http` package.
+- **Commit grouping:** the runtime loop, tools, adapters, built-in tools, MCP, security tests and docs landed as separate commits. Each passed `make check`.
+- **The coding-agent demo from the old roadmap was dropped:** the core must not assume coding tasks, and the end-to-end tests exercise the same loop with neutral tools.
+- **Accepted limitation:** a recorded `allow` or approval survives a policy change (weakness 5 above).
+
+Verification: `make check` (ruff, pyright strict, pytest) passes offline. The mutation checks listed in ADR-0014 to ADR-0017 were run by removing each protection and confirming that tests fail. The live tool round trip (`tests/live/test_tool_calling_live.py`) hasn't been run.

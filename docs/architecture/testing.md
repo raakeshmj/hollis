@@ -22,7 +22,7 @@
 
 ## Reliability and security properties to verify
 
-Each property maps to a requirement and gets a test when its component exists. ✅ marks properties tested as of M1.
+Each property maps to a requirement and gets a test when its component exists. ✅ marks properties that are tested, with the milestone that added them. In M3, the protections that matter most were also mutation-checked: each was removed in turn and the suite failed.
 
 | Property | Requirement | First tested |
 |---|---|---|
@@ -40,8 +40,16 @@ Each property maps to a requirement and gets a test when its component exists. �
 | Custom-CA TLS works, and fails without the CA, over a real socket | ADR-0013 | ✅ M2 `tests/network/` |
 | Protocol conformance (offline loopback; live opt-in) | ADR-0012 | ✅ offline; live: none recorded ([matrix](model-compatibility.md)) |
 | Registered secrets never appear in persisted events, the database file or logs | NFR-4 | ✅ M2 (planted-key tests). Arbitrary secrets in user text are not detected ([gap](../product/requirements.md#data-persistence-and-secret-handling)) |
-| Tool arguments failing schema validation never execute | NFR-4, FR-6 | M3 |
-| Policy-denied tool calls never execute and are recorded as denied | FR-7 | M3 |
+| Tool arguments failing schema validation never execute | NFR-4, FR-6 | ✅ M3 `tests/runtime/test_tool_loop.py`, `tests/tools/` |
+| Policy-denied tool calls never execute and are recorded as denied | FR-7 | ✅ M3 |
+| No tool executes without an `allow` decision or an approval bound to the exact tool version and arguments; hand-built illegal logs are rejected by the fold | FR-7 | ✅ M3 `tests/runtime/test_tool_fold.py` |
+| Nothing in a turn executes while any approval in it is pending; approvals survive restarts and can't be replayed onto other arguments | FR-7 | ✅ M3 |
+| A started tool call with no result is re-executed only if idempotent, otherwise reconciled or recorded `ambiguous` | FR-4 | ✅ M3 `tests/recovery/test_tool_recovery.py` |
+| Tool descriptions, MCP annotations and tool output cannot grant permission; external output is framed as untrusted | NFR-4 | ✅ M3 `tests/security/` |
+| Registered secrets never persist via tool arguments, continuations or tool results; calls carrying them are denied | NFR-4 | ✅ M3 |
+| Model turns, tool calls, parallelism, timeouts, output size and the deadline bound every run; no tool starts after the deadline | NFR-6 | ✅ M3 |
+| Filesystem tools stay inside their root; the command tool runs no shell, refuses option injection and kills its process group | NFR-4 | ✅ M3 `tests/tools/` (not a sandbox) |
+| MCP: only allowlisted tools are exposed; pinned or changed definitions are refused; real stdio and HTTP transports work | ADR-0017 | ✅ M3 offline; no third-party servers |
 
 ## Future behavioral evaluations (once live access is available)
 

@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Status: direction-setting. Implemented so far (M1–M2): the runtime core (`hollis.runtime`: events, state fold, RunStore and ModelProvider ports, failure taxonomy, budgets, redaction, single-turn runner) the model gateway (`hollis.gateway`: catalog, routing policy, resolution), and adapters (`hollis.adapters`: in-memory and SQLite stores, scripted fake provider, credential loader, endpoint config, Anthropic Messages and OpenAI-compatible Chat Completions protocol adapters). Each section separates **decided** from **open**. Decided items link to ADRs, and open items name the milestone that resolves them.
+Status: direction-setting. Implemented so far (M1–M3): the runtime core (`hollis.runtime`: events, state fold, RunStore, ModelProvider and tool ports, failure taxonomy, budgets, redaction, the multi-turn tool loop), the tool system (`hollis.tools`: `@tool` definitions, registry, rule-based policy, filesystem and command tools, MCP client), the model gateway (`hollis.gateway`: catalog, routing policy, resolution), and adapters (`hollis.adapters`: in-memory and SQLite stores, scripted fake provider, credential loader, endpoint config, Anthropic Messages and OpenAI-compatible Chat Completions protocol adapters). Each section separates **decided** from **open**. Decided items link to ADRs, and open items name the milestone that resolves them.
 
 ## Shape
 
@@ -14,13 +14,13 @@ Hollis is a **modular monolith**: one Python package (`hollis`) with internal mo
                               runtime core
      (run state machine · event log · runner · budgets · policy)
                      |                |                 |
-       ModelResolver/ModelProvider  RunStore        ToolExecutor      <- ports (in core)
+       ModelResolver/ModelProvider  RunStore   ToolCatalog/Policy/Approver  <- ports (in core)
                      |                |                 |
                model gateway          |                 |             <- hollis.gateway
    (catalog · routing policy · credentials)             |
                      |                |                 |
-     protocol adapters (anthropic-    storage adapters  sandbox adapters  <- adapters (edge)
-     messages, openai-chat-completions)
+     protocol adapters (anthropic-    storage adapters  hollis.tools: functions, fs,  <- edge
+     messages, openai-chat-completions)                  command, MCP (no sandbox)
 ```
 
 Packages appear only when there is code to put in them. Nothing gets created to reserve a name.
@@ -34,7 +34,7 @@ Packages appear only when there is code to put in them. Nothing gets created to 
 | **Model provider port** | Provider-neutral request and response types per task family (text generation in M2), plus deployment descriptors and capabilities. | M1 (fake), M2 |
 | **Model gateway** | Resolves logical model ids to deployments and protocol adapters; routing policy; credential resolution. No fallback or load balancing ([ADR-0011](../decisions/0011-model-gateway-and-deployments.md)). | M2 |
 | **Storage port** | Persists run records and, later, memory. Adapters: in-memory, SQLite, later others. | M1 |
-| **Tool system** | Typed tool schemas, argument validation, permission policy, sandboxed execution, result capture. | M3 |
+| **Tool system** | Typed tool definitions, argument validation, deterministic policy and approval, bounded execution with declared isolation, durable result capture, MCP ([ADR-0014](../decisions/0014-tool-runtime-and-durable-lifecycle.md)–[0017](../decisions/0017-mcp-integration.md)). No sandbox backend. | M3 |
 | **Context manager** | Decides what goes into each model call within a token budget. | M4 |
 | **Memory / retrieval** | Long-lived knowledge across runs, behind a storage port. | M4 |
 | **Interfaces** | SDK first. CLI and REST API are thin layers over the same operations. | SDK M1+, CLI/API M5 |
@@ -45,7 +45,8 @@ Packages appear only when there is code to put in them. Nothing gets created to 
 **Decided.** The runtime is the product's foundation. The core is async for I/O-bound paths: model calls, tool execution and storage ([ADR-0003](../decisions/0003-async-first-runtime.md)).
 
 - **State from events.** Run state is a pure fold over an append-only, versioned event log, with an explicit transition table (NFR-1, [ADR-0005](../decisions/0005-event-recorded-run-state.md)).
-- **States (M2):** `pending → model_call_in_flight → (model_responded → completed | attempt_failed → model_call_in_flight | failed)`. `pending` can also go to `failed` (deadline passed before the first attempt). Every attempt ends with a recorded outcome before another starts ([ADR-0007](../decisions/0007-failure-classification-retries-and-ambiguous-policy.md)).
+- **States (M3):** `pending → model_call_in_flight → (model_responded → completed | tool_calls → model_call_in_flight | attempt_failed → model_call_in_flight | failed)`. `pending` can also go to `failed` (deadline passed before the first attempt). Every attempt ends with a recorded outcome before another starts ([ADR-0007](../decisions/0007-failure-classification-retries-and-ambiguous-policy.md)). A run in `tool_calls` with unresolved approvals is suspended until `Runner.resolve_approval`.
+- **Tool lifecycle** ([ADR-0014](../decisions/0014-tool-runtime-and-durable-lifecycle.md)): `ToolCallDecided → ToolApprovalResolved? → ToolExecutionStarted → ToolResultRecorded` per call. The fold enforces authorization, approval binding, batch holding, idempotent-only re-execution and limits, whichever code appends.
 - **No `interrupted` status.** A crashed run is simply a non-terminal run with no active runner.
 - **No `cancelled` status** until cancellation exists.
 - **One code path.** `Runner.execute` performs both first execution and recovery.
@@ -56,10 +57,9 @@ Packages appear only when there is code to put in them. Nothing gets created to 
   - Invocation is at-least-once on ambiguous outcomes. Exactly-once is **not** claimed.
 
 **Open.**
-- Multi-turn and tool-driven execution, and the events they need (M3).
 - A limit on manual resumes of the same run (attempts are bounded; resumes are not).
-- Idempotency strategy for non-repeatable tool side effects (M3).
-- Concurrency model for parallel tool calls (M3).
+- Re-evaluating policy on resume. A recorded `allow` or approval currently stands after a policy change.
+- Cancellation.
 
 ## Model providers
 
@@ -86,16 +86,20 @@ Packages appear only when there is code to put in them. Nothing gets created to 
 
 ## Tool execution and security
 
-**Principles (decided).**
-- Model output is untrusted input. Tool arguments are validated against typed schemas before anything runs.
-- Tools run with least privilege under an explicit policy (allow, deny or ask) attached to the agent or run.
-- Execution goes through a `ToolExecutor` port, so isolation (subprocess, container, remote) is swappable.
-- Secrets are referenced by name and resolved at execution time. They never enter persisted events, logs or model context unless explicitly allowed (NFR-4; target design, not yet met in M1 — see [the gap](../product/requirements.md#data-persistence-and-secret-handling)).
-- Every tool call and its result is recorded.
+**Decided (M3).**
+- Model output is untrusted input. Tool arguments are validated against the tool's schema before policy runs; invalid calls never execute.
+- Policy is deterministic code over runtime-controlled facts (tool identity, declared effect and trust, environment, validated arguments). Descriptions, MCP annotations and tool output never grant permission. The default allows only trusted read-only tools; everything else needs approval, and without an approver it is denied ([ADR-0015](../decisions/0015-tool-definitions-policy-and-approval.md)).
+- Approvals are bound to the exact run, invocation, tool version and arguments, and live only in events.
+- Side effects are never blindly repeated: re-execution only for tools declared idempotent; otherwise reconcile or record `ambiguous`. No exactly-once claim.
+- Registered secrets are redacted from tool arguments, continuations and results; calls carrying them are denied. External results are framed as untrusted data.
+- Isolation is declared honestly per tool: `none` (in-process) or `process` (separate process, same privileges). **Nothing is sandboxed**; `sandbox` is reserved for a verified backend ([ADR-0016](../decisions/0016-execution-isolation.md)).
+- MCP tools are opt-in per tool, external, approval-required by default, and pinned or locked out on definition change ([ADR-0017](../decisions/0017-mcp-integration.md)).
 
 **Open.**
-- Sandbox technology per platform (M3).
-- Network egress policy (M3).
+- A sandbox backend with verified isolation per platform.
+- Network egress control for tools.
+- An artifact store for tool output above the size limit.
+- Approver identity and an approval UI.
 
 ## Persistence and deployment
 
@@ -142,7 +146,11 @@ See [testing.md](testing.md).
 | Model gateway and deployment model | Accepted (M2) | ADR-0011 |
 | Own protocol adapters; no multi-provider library | Accepted (M2) | ADR-0012 |
 | Locality, routing policy, on-prem networking | Accepted (M2) | ADR-0013 |
+| Durable tool lifecycle, recovery, results and framing | Accepted (M3) | ADR-0014 |
+| Tool definitions, registry, policy and approval | Accepted (M3) | ADR-0015 |
+| Execution isolation declared per tool; no sandbox claimed | Accepted (M3) | ADR-0016 |
+| MCP via the official SDK; allowlisted, pinned, external | Accepted (M3) | ADR-0017 |
 | Streaming, native non-Anthropic adapters, more task families, cost accounting | Open | — |
-| Sandbox technology, tool idempotency | Open | M3 |
+| Sandbox backend, tool egress control | Open | Execution backends |
 | Retrieval backend | Open, chosen by benchmark | M4 |
 | Cloud deployment target | Open | Undecided |

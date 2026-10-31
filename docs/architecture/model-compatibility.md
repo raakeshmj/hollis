@@ -27,6 +27,17 @@
 | llama.cpp | documented ("Messages-compatible") | none | route details not confirmed |
 | LM Studio | listed in navigation | none | not reviewed |
 
+## Tool calling (M3)
+
+Tool calling is implemented for both protocols and declared (`tools=True`) only in the `anthropic` and `openai` presets. Other presets leave it off until a live run shows the server's tool-call behaviour; set it explicitly on a deployment to opt in.
+
+| Protocol | Status | Notes |
+|---|---|---|
+| `anthropic-messages` | documented (offline fixtures) | Assistant content blocks, including thinking signatures, are echoed back unchanged after tool use. |
+| `openai-chat-completions` | documented (offline fixtures) | Arguments arrive as JSON strings; unparseable arguments become `invalid` results, not crashes. Legacy `function_call` is rejected as an invalid response. |
+
+`tests/live/test_tool_calling_live.py` runs one tool round trip against Anthropic's API when enabled. It has not been run.
+
 ## Recording a verification
 
 Run the live conformance suite (see `tests/conformance/test_conformance.py`) and add a row:
