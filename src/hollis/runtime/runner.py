@@ -605,6 +605,9 @@ class Runner:
         evidence = {p.key: p.text for p in state.passages}
         for turn in state.turns:
             for invocation in turn.invocations:
+                ref = state.tool(invocation.call.name)
+                if ref is None or ref.trust is not ToolTrust.TRUSTED:
+                    continue  # an external tool could print fake evidence handles
                 evidence.update(tool_evidence(render_parts(invocation.parts)))
         if not evidence:
             return state
