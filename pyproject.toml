@@ -23,6 +23,7 @@ dev = [
     "hypothesis>=6.170.14",
     "pyright>=1.1.414",
     "pytest>=9.2.0",
+    "pytest-asyncio>=1.4.1",
     "ruff>=0.17.3",
 ]
 
@@ -63,4 +64,6 @@ testpaths = ["tests"]
 pythonpath = ["."]  # lets tests import shared helpers from tests.support
 addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib"]
 xfail_strict = true
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 filterwarnings = ["error"]
