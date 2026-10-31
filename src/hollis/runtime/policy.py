@@ -30,6 +30,17 @@ class RunBudget(BaseModel):
     attempt_timeout_s: float = Field(default=120.0, gt=0, le=3600)
     deadline_s: float | None = Field(default=None, gt=0)
     """Wall-clock limit measured from run creation; survives crashes and resumes."""
+    max_model_turns: int = Field(default=8, ge=1, le=100)
+    """Logical model calls per run (each tool round trip adds one)."""
+    max_tool_calls: int = Field(default=32, ge=0, le=1000)
+    """Tool invocations per run that may be authorized; further calls are rejected."""
+    max_tool_calls_per_turn: int = Field(default=8, ge=0, le=100)
+    max_parallel_tools: int = Field(default=4, ge=1, le=32)
+    """Concurrent executions; only batches of read-only tools run concurrently."""
+    max_tool_output_chars: int = Field(default=16_000, ge=256, le=1_000_000)
+    """Per result; longer output is truncated with an explicit marker."""
+    approval_timeout_s: float = Field(default=3600.0, gt=0)
+    """Pending approvals expire after this long and the call is denied."""
 
 
 def default_ambiguous_policy(*, provider_deduplicates: bool) -> AmbiguousOutcomePolicy:

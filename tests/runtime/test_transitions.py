@@ -18,6 +18,14 @@ LEGAL: dict[tuple[RunStatus | None, EventType], RunStatus] = {
     (S.ATTEMPT_FAILED, E.MODEL_CALL_STARTED): S.MODEL_CALL_IN_FLIGHT,
     (S.ATTEMPT_FAILED, E.RUN_FAILED): S.FAILED,
     (S.MODEL_RESPONDED, E.RUN_COMPLETED): S.COMPLETED,
+    (S.MODEL_RESPONDED, E.TOOL_CALL_DECIDED): S.TOOL_CALLS,
+    (S.MODEL_RESPONDED, E.RUN_FAILED): S.FAILED,
+    (S.TOOL_CALLS, E.TOOL_CALL_DECIDED): S.TOOL_CALLS,
+    (S.TOOL_CALLS, E.TOOL_APPROVAL_RESOLVED): S.TOOL_CALLS,
+    (S.TOOL_CALLS, E.TOOL_EXECUTION_STARTED): S.TOOL_CALLS,
+    (S.TOOL_CALLS, E.TOOL_RESULT_RECORDED): S.TOOL_CALLS,
+    (S.TOOL_CALLS, E.MODEL_CALL_STARTED): S.MODEL_CALL_IN_FLIGHT,
+    (S.TOOL_CALLS, E.RUN_FAILED): S.FAILED,
 }
 
 ALL_PAIRS = list(itertools.product([None, *RunStatus], EventType))
@@ -46,4 +54,4 @@ def test_terminal_states_accept_no_events(status: RunStatus) -> None:
 
 
 def test_every_pair_is_classified() -> None:
-    assert len(LEGAL) + len(ILLEGAL) == len(ALL_PAIRS) == 7 * 6
+    assert len(LEGAL) + len(ILLEGAL) == len(ALL_PAIRS) == 8 * 10

@@ -35,7 +35,7 @@ def test_serialized_form_is_versioned_json() -> None:
         "occurred_at",
         "payload",
     }
-    assert data["schema_version"] == 2
+    assert data["schema_version"] == 3
     assert data["payload"]["type"] == "run_created"
 
 
@@ -99,4 +99,15 @@ def test_envelope_requires_utc_timestamp() -> None:
 def test_envelope_rejects_non_current_schema_version_in_memory() -> None:
     event = build_log(uuid4(), [created()])[0]
     with pytest.raises(ValidationError, match="not current"):
-        EventEnvelope.model_validate({**event.model_dump(), "schema_version": 3})
+        EventEnvelope.model_validate({**event.model_dump(), "schema_version": 4})
+
+
+def test_v2_run_created_and_response_are_upcast_to_v3() -> None:
+    run = uuid4()
+    created_event, *_ = build_log(run, happy_payloads(run))
+    data = json.loads(serialize_event(created_event))
+    data["schema_version"] = 2
+    del data["payload"]["tools"]  # v2 had no tools field
+    upcast = deserialize_event(json.dumps(data))
+    assert upcast.schema_version == 3
+    assert upcast.payload == created_event.payload

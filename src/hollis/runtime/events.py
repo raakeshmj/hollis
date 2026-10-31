@@ -17,6 +17,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    JsonValue,
     ValidationError,
     field_validator,
     model_validator,
@@ -30,6 +31,7 @@ from hollis.runtime.model import (
     ModelResponse,
 )
 from hollis.runtime.policy import AmbiguousOutcomePolicy, RunBudget
+from hollis.runtime.tools import Decision, ResultPart, ToolRef
 
 
 class EventType(StrEnum):
@@ -37,6 +39,10 @@ class EventType(StrEnum):
     MODEL_CALL_STARTED = "model_call_started"
     MODEL_RESPONSE_RECORDED = "model_response_recorded"
     MODEL_CALL_FAILED = "model_call_failed"
+    TOOL_CALL_DECIDED = "tool_call_decided"
+    TOOL_APPROVAL_RESOLVED = "tool_approval_resolved"
+    TOOL_EXECUTION_STARTED = "tool_execution_started"
+    TOOL_RESULT_RECORDED = "tool_result_recorded"
     RUN_COMPLETED = "run_completed"
     RUN_FAILED = "run_failed"
 
@@ -53,6 +59,8 @@ class RunCreated(_Payload):
     deployment: DeploymentRef
     budget: RunBudget
     ambiguous_policy: AmbiguousOutcomePolicy
+    tools: tuple[ToolRef, ...] = ()
+    """Tools enabled for this run (least privilege): the model may call only these."""
 
 
 class ModelCallStarted(_Payload):
@@ -101,6 +109,66 @@ class ModelCallFailed(_Payload):
     failure: ProviderFailure
 
 
+class ToolCallDecided(_Payload):
+    """Validation and policy outcome for one model tool call, recorded before anything runs."""
+
+    type: Literal[EventType.TOOL_CALL_DECIDED] = EventType.TOOL_CALL_DECIDED
+    invocation_id: str
+    turn: int = Field(ge=0)
+    index: int = Field(ge=0)
+    call_id: str
+    tool: str
+    decision: Decision
+    reason: str
+    rule: str | None = None
+    arguments: dict[str, JsonValue] | None = None
+    """Validated, normalized arguments (None when the call was invalid)."""
+
+
+class ToolApprovalResolved(_Payload):
+    type: Literal[EventType.TOOL_APPROVAL_RESOLVED] = EventType.TOOL_APPROVAL_RESOLVED
+    invocation_id: str
+    binding: str
+    approved: bool
+    approver: str
+    reason: str | None = None
+
+
+class ToolExecutionStarted(_Payload):
+    """Intent to execute one attempt of an invocation. Appended before the tool runs."""
+
+    type: Literal[EventType.TOOL_EXECUTION_STARTED] = EventType.TOOL_EXECUTION_STARTED
+    invocation_id: str
+    attempt: int = Field(ge=1)
+
+
+class ToolOutcome(StrEnum):
+    SUCCESS = "success"
+    ERROR = "error"
+    """The tool ran and reported a failure."""
+    INVALID = "invalid"
+    """The call was not executed: unknown tool, bad arguments or a limit."""
+    DENIED = "denied"
+    """Not executed: policy denial, or approval refused, expired or unavailable."""
+    TIMEOUT = "timeout"
+    """A read-only tool exceeded its time limit."""
+    AMBIGUOUS = "ambiguous"
+    """A side-effecting tool may or may not have taken effect, and could not be safely retried
+    or reconciled."""
+
+
+class ToolResultRecorded(_Payload):
+    """The final outcome of an invocation, exactly as returned to the model."""
+
+    type: Literal[EventType.TOOL_RESULT_RECORDED] = EventType.TOOL_RESULT_RECORDED
+    invocation_id: str
+    outcome: ToolOutcome
+    parts: tuple[ResultPart, ...] = ()
+    truncated: bool = False
+    original_chars: int = Field(default=0, ge=0)
+    duration_ms: int | None = Field(default=None, ge=0)
+
+
 class RunCompleted(_Payload):
     type: Literal[EventType.RUN_COMPLETED] = EventType.RUN_COMPLETED
 
@@ -111,7 +179,9 @@ class FailureReason(StrEnum):
     AMBIGUOUS_OUTCOME = "ambiguous_outcome"
     """The last attempt's outcome is unknown and the policy forbids retrying."""
     BUDGET_EXHAUSTED = "budget_exhausted"
-    """Attempts or the deadline ran out."""
+    """Attempts, turns, tool calls or the deadline ran out."""
+    MODEL_PROTOCOL_ERROR = "model_protocol_error"
+    """The model's response cannot be continued (e.g. duplicate tool call ids)."""
 
 
 class RunFailed(_Payload):
@@ -128,6 +198,10 @@ AnyPayload = (
     | ModelCallStarted
     | ModelResponseRecorded
     | ModelCallFailed
+    | ToolCallDecided
+    | ToolApprovalResolved
+    | ToolExecutionStarted
+    | ToolResultRecorded
     | RunCompleted
     | RunFailed
 )
@@ -136,10 +210,14 @@ EventPayload = Annotated[AnyPayload, Field(discriminator="type")]
 # Current payload schema version per event type. Bump a version only together with an
 # upcaster in _UPCASTERS that converts the previous version's payload dict.
 CURRENT_SCHEMA_VERSIONS: Mapping[EventType, int] = {
-    EventType.RUN_CREATED: 2,
+    EventType.RUN_CREATED: 3,
     EventType.MODEL_CALL_STARTED: 1,
-    EventType.MODEL_RESPONSE_RECORDED: 2,
+    EventType.MODEL_RESPONSE_RECORDED: 3,
     EventType.MODEL_CALL_FAILED: 1,
+    EventType.TOOL_CALL_DECIDED: 1,
+    EventType.TOOL_APPROVAL_RESOLVED: 1,
+    EventType.TOOL_EXECUTION_STARTED: 1,
+    EventType.TOOL_RESULT_RECORDED: 1,
     EventType.RUN_COMPLETED: 1,
     EventType.RUN_FAILED: 2,
 }
@@ -155,8 +233,17 @@ MIN_SUPPORTED_SCHEMA_VERSIONS: Mapping[EventType, int] = {
 
 type Upcaster = Callable[[dict[str, Any]], dict[str, Any]]
 
+
+def _added_defaulted_fields(payload: dict[str, Any]) -> dict[str, Any]:
+    """v2 -> v3 for changes that only add fields with defaults (M3: tools, tool calls)."""
+    return payload
+
+
 # (event type, from_version) -> function producing the payload dict at from_version + 1.
-_UPCASTERS: Mapping[tuple[EventType, int], Upcaster] = {}
+_UPCASTERS: Mapping[tuple[EventType, int], Upcaster] = {
+    (EventType.RUN_CREATED, 2): _added_defaulted_fields,
+    (EventType.MODEL_RESPONSE_RECORDED, 2): _added_defaulted_fields,
+}
 
 
 class EventEnvelope(BaseModel):

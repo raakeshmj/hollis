@@ -23,8 +23,10 @@ from hollis.runtime.model import (
     DeploymentDescriptor,
     Locality,
     ModelCallError,
+    ModelCapabilities,
     ModelRequest,
     ModelResponse,
+    TextCapabilities,
 )
 
 FAKE_DESCRIPTOR = DeploymentDescriptor(
@@ -34,6 +36,7 @@ FAKE_DESCRIPTOR = DeploymentDescriptor(
     model="fake",
     locality=Locality.LOCAL,
     deduplicates_requests=True,
+    capabilities=ModelCapabilities(text=TextCapabilities(tools=True)),
 )
 
 

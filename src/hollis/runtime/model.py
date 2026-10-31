@@ -10,6 +10,8 @@ from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from hollis.runtime.conversation import HistoryItem, ProviderContinuation, ToolCall, ToolSpec
+
 
 class _Frozen(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -33,6 +35,7 @@ class StopReason(StrEnum):
     REFUSAL = "refusal"
     CONTEXT_WINDOW_EXCEEDED = "context_window_exceeded"
     CONTENT_FILTERED = "content_filtered"
+    TOOL_USE = "tool_use"
     OTHER = "other"
 
 
@@ -48,6 +51,9 @@ class ModelResponse(_Frozen):
     """Identifier of the response object itself (e.g. a message or completion id)."""
     omitted_block_types: tuple[str, ...] = ()
     """Non-text content block types present in the provider response but not mapped."""
+    tool_calls: tuple[ToolCall, ...] = ()
+    continuation: ProviderContinuation | None = None
+    """Provider content to send back verbatim when continuing after tool calls."""
 
 
 class ModelRequest(_Frozen):
@@ -56,7 +62,11 @@ class ModelRequest(_Frozen):
     model: str = Field(min_length=1)
     """The deployment's wire model identifier."""
     input: str
+    """The run's initial user message."""
     instructions: str | None = None
+    history: tuple[HistoryItem, ...] = ()
+    """Earlier assistant turns and tool results, in order, after `input`."""
+    tools: tuple[ToolSpec, ...] = ()
     max_output_tokens: int = Field(ge=1)
     timeout_s: float = Field(gt=0)
     """Wall-clock limit for this physical attempt."""
@@ -220,7 +230,11 @@ class CapabilityMismatch(ValueError):
 
 
 def require_text_generation(
-    descriptor: DeploymentDescriptor, *, has_instructions: bool, max_output_tokens: int
+    descriptor: DeploymentDescriptor,
+    *,
+    has_instructions: bool,
+    max_output_tokens: int,
+    uses_tools: bool = False,
 ) -> None:
     caps = descriptor.capabilities
     text = caps.text
@@ -230,6 +244,8 @@ def require_text_generation(
     else:
         if has_instructions and not text.system_prompt:
             problems.append("instructions (system prompt) are not supported")
+        if uses_tools and not text.tools:
+            problems.append("tool calling is not declared in the deployment's capabilities")
         if text.max_output_tokens is not None and max_output_tokens > text.max_output_tokens:
             problems.append(
                 f"max_output_tokens {max_output_tokens} exceeds the limit {text.max_output_tokens}"
