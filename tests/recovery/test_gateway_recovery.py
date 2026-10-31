@@ -14,7 +14,7 @@ from hollis.runtime.state import RunStatus
 from hollis.runtime.store import RunStore
 from tests.support import openai_chat
 from tests.support.crash import CrashAfterGenerate, CrashingStore, SimulatedCrash
-from tests.support.http import MockHTTP
+from tests.support.mock_http import MockHTTP
 
 CATALOG = Catalog.from_mapping(
     {

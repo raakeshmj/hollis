@@ -13,8 +13,10 @@ CORE_MODULES = [
     "hollis.adapters.credentials",
     "hollis.adapters.config",
     "hollis.gateway",
+    "hollis.tools",
+    "hollis.tools.builtin",
 ]
-OPTIONAL = ("anthropic", "httpx2", "opentelemetry")
+OPTIONAL = ("anthropic", "httpx2", "opentelemetry", "mcp")
 
 
 def _loaded_after(code: str) -> set[str]:

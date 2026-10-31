@@ -10,7 +10,7 @@ from pydantic import SecretStr
 from hollis.adapters.config import AuthConfig, EndpointConfig, NoAuth, OpenAIChatOptions
 from hollis.adapters.openai_chat import OpenAIChatProvider
 from hollis.runtime.model import DeploymentDescriptor, Locality
-from tests.support.http import MockHTTP
+from tests.support.mock_http import MockHTTP
 
 FIXTURES = Path(__file__).parents[1] / "adapters" / "fixtures" / "openai_chat"
 LOCAL_URL = "http://127.0.0.1:8000/v1"

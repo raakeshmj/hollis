@@ -17,7 +17,7 @@ from hollis.runtime.redaction import REDACTED
 from hollis.runtime.runner import DeploymentChanged, RunSpec, SecretInRunInput
 from hollis.runtime.state import RunStatus
 from tests.support import anthropic, openai_chat
-from tests.support.http import MockHTTP
+from tests.support.mock_http import MockHTTP
 
 ANTHROPIC_KEY = anthropic.TEST_KEY
 CORP_TOKEN = "corp-inference-token-0123456789"

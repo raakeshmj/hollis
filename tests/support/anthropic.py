@@ -19,7 +19,7 @@ from hollis.runtime.model import (
     ModelCapabilities,
     TextCapabilities,
 )
-from tests.support.http import MockHTTP
+from tests.support.mock_http import MockHTTP
 
 FIXTURES = Path(__file__).parents[1] / "adapters" / "fixtures" / "anthropic"
 TEST_KEY = "sk-ant-api03-TESTKEYvalue-not-real-0123456789abcdef"
