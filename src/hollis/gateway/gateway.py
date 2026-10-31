@@ -16,8 +16,15 @@ from pydantic import SecretStr
 
 from hollis.adapters.config import BearerAuth, EndpointConfig, HeaderAuth
 from hollis.adapters.credentials import require_env_secret
-from hollis.gateway.catalog import AnthropicMessagesDeployment, Catalog, OpenAIChatDeployment
-from hollis.runtime.model import ModelProvider, UnknownModel
+from hollis.gateway.catalog import (
+    AnthropicMessagesDeployment,
+    AnyDeployment,
+    Catalog,
+    OpenAIChatDeployment,
+    OpenAIEmbeddingsDeployment,
+)
+from hollis.runtime.embedding import EmbeddingProvider
+from hollis.runtime.model import ModelProvider, Task, UnknownModel
 from hollis.runtime.redaction import Redactor
 
 if TYPE_CHECKING:
@@ -34,6 +41,14 @@ class RoutingDenied(PermissionError):
 
 class _Closable(ModelProvider, Protocol):
     async def aclose(self) -> None: ...
+
+
+class _ClosableEmbedder(EmbeddingProvider, Protocol):
+    async def aclose(self) -> None: ...
+
+
+class WrongTask(LookupError):
+    """A deployment was resolved for a task it does not serve."""
 
 
 type ClientFactory = Callable[[EndpointConfig], "httpx2.AsyncClient"]
@@ -55,6 +70,7 @@ class ModelGateway:
         self._redactor = redactor or Redactor()
         self._client_factory = http_client_factory
         self._providers: dict[str, _Closable] = {}
+        self._embedders: dict[str, _ClosableEmbedder] = {}
 
     @property
     def catalog(self) -> Catalog:
@@ -66,15 +82,43 @@ class ModelGateway:
         return self._redactor
 
     def resolve(self, model: str) -> ModelProvider:
+        """The text-generation provider for `model`."""
+        deployment = self._allowed(model)
+        if isinstance(deployment, OpenAIEmbeddingsDeployment):
+            raise WrongTask(f"{model!r} is an embedding deployment; use embedder()")
+        provider = self._providers.get(model)
+        if provider is None:
+            provider = self._providers[model] = self._build(deployment)
+        return provider
+
+    def embedder(self, model: str) -> EmbeddingProvider:
+        """The embedding provider for `model` (same routing policy and credentials rules)."""
+        deployment = self._allowed(model)
+        if not isinstance(deployment, OpenAIEmbeddingsDeployment):
+            raise WrongTask(
+                f"{model!r} is not an embedding deployment ({Task.EMBEDDING} not served)"
+            )
+        embedder = self._embedders.get(model)
+        if embedder is None:
+            from hollis.adapters.openai_embeddings import OpenAIEmbeddingsProvider
+
+            embedder = self._embedders[model] = OpenAIEmbeddingsProvider(
+                deployment.descriptor(),
+                deployment.endpoint,
+                self._credential(deployment.endpoint),
+                deployment.options,
+                version=deployment.version,
+                http_client=self._http_client(deployment.endpoint),
+            )
+        return embedder
+
+    def _allowed(self, model: str) -> AnyDeployment:
         deployment = self._catalog.get(model)
         if deployment is None:
             raise UnknownModel(model)
         if deployment.locality not in self._catalog.routing.allowed_localities:
             raise RoutingDenied(model, deployment.locality.value)
-        provider = self._providers.get(model)
-        if provider is None:
-            provider = self._providers[model] = self._build(deployment)
-        return provider
+        return deployment
 
     def runner(self, store: "RunStore", **kwargs: Any) -> "Runner":
         from hollis.runtime.runner import Runner
@@ -83,8 +127,11 @@ class ModelGateway:
 
     async def aclose(self) -> None:
         providers, self._providers = list(self._providers.values()), {}
+        embedders, self._embedders = list(self._embedders.values()), {}
         for provider in providers:
             await provider.aclose()
+        for embedder in embedders:
+            await embedder.aclose()
 
     def _credential(self, endpoint: EndpointConfig) -> SecretStr | None:
         if not isinstance(endpoint.auth, BearerAuth | HeaderAuth):

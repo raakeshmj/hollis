@@ -193,6 +193,7 @@ class Task(StrEnum):
     """Model task families. Each family gets its own port; M2 implements text generation."""
 
     TEXT_GENERATION = "text_generation"
+    EMBEDDING = "embedding"
 
 
 class UsageReporting(StrEnum):
@@ -219,9 +220,22 @@ class TextCapabilities(_Frozen):
     window is unknown."""
 
 
+class EmbeddingCapabilities(_Frozen):
+    """What an embedding deployment produces. Declared, then validated on every response."""
+
+    dimensions: int = Field(ge=1, le=65_536)
+    max_batch: int = Field(default=32, ge=1, le=2048)
+    """Inputs per request."""
+    max_input_chars: int = Field(default=8000, ge=1)
+    """Longer inputs are truncated by the caller before sending (token limits vary by model)."""
+    normalized: bool = False
+    """The deployment returns unit-length vectors."""
+
+
 class ModelCapabilities(_Frozen):
     tasks: frozenset[Task] = frozenset({Task.TEXT_GENERATION})
     text: TextCapabilities | None = TextCapabilities()
+    embedding: EmbeddingCapabilities | None = None
 
 
 class DeploymentRef(_Frozen):

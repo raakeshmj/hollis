@@ -18,6 +18,9 @@ CORE_MODULES = [
     "hollis.memory",
     "hollis.adapters.sqlite_memory",
     "hollis.adapters.artifact_store",
+    "hollis.adapters.local_embeddings",
+    "hollis.runtime.embedding",
+    "hollis.runtime.text",
 ]
 OPTIONAL = ("anthropic", "httpx2", "opentelemetry", "mcp")
 

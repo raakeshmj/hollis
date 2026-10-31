@@ -156,3 +156,24 @@ class OpenAIChatOptions(_Frozen):
         if clashes:
             raise ValueError(f"extra_body must not set Hollis-managed fields {clashes}")
         return value
+
+
+_MANAGED_EMBEDDING_FIELDS = frozenset({"model", "input", "encoding_format", "dimensions"})
+
+
+class OpenAIEmbeddingsOptions(_Frozen):
+    query_prefix: str = ""
+    """Prepended to queries; some models expect an instruction (e.g. `search_query: `)."""
+    document_prefix: str = ""
+    """Prepended to documents (e.g. `search_document: `)."""
+    send_dimensions: bool = False
+    """Send `dimensions` (only for models that support shortened embeddings)."""
+    extra_body: dict[str, JsonValue] = Field(default_factory=dict[str, JsonValue])
+
+    @field_validator("extra_body")
+    @classmethod
+    def _no_managed_fields(cls, value: dict[str, JsonValue]) -> dict[str, JsonValue]:
+        clashes = sorted(_MANAGED_EMBEDDING_FIELDS & value.keys())
+        if clashes:
+            raise ValueError(f"extra_body must not set Hollis-managed fields {clashes}")
+        return value

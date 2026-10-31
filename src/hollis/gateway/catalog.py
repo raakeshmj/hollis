@@ -12,9 +12,14 @@ from typing import Annotated, Any, Literal, Self, cast
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from hollis.adapters.config import AnthropicMessagesOptions, EndpointConfig, OpenAIChatOptions
+from hollis.adapters.config import (
+    AnthropicMessagesOptions,
+    EndpointConfig,
+    OpenAIChatOptions,
+    OpenAIEmbeddingsOptions,
+)
 from hollis.gateway import presets
-from hollis.runtime.model import DeploymentDescriptor, Locality, ModelCapabilities
+from hollis.runtime.model import DeploymentDescriptor, Locality, ModelCapabilities, Task
 
 # Hosts that are third-party services by definition; they can never be "local" or "private".
 KNOWN_EXTERNAL_HOSTS = frozenset({"api.anthropic.com", "api.openai.com", "ollama.com"})
@@ -106,9 +111,41 @@ class OpenAIChatDeployment(_Deployment):
         return self._descriptor(self.protocol)
 
 
-Deployment = Annotated[
-    AnthropicMessagesDeployment | OpenAIChatDeployment, Field(discriminator="protocol")
-]
+class OpenAIEmbeddingsDeployment(_Deployment):
+    """An embedding model behind an OpenAI-compatible `/v1/embeddings` endpoint (ADR-0022)."""
+
+    protocol: Literal["openai-embeddings"] = "openai-embeddings"
+    options: OpenAIEmbeddingsOptions = OpenAIEmbeddingsOptions()
+    version: str = Field(default="1", min_length=1)
+    """Part of the embedding space identity; bump it if the served model changes."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _embedding_task(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            fields = dict(cast(dict[str, Any], data))
+            caps = dict(cast(dict[str, Any], fields.get("capabilities") or {}))
+            caps.setdefault("tasks", ["embedding"])
+            caps.setdefault("text", None)
+            fields["capabilities"] = caps
+            return fields
+        return data
+
+    @model_validator(mode="after")
+    def _declares_embedding(self) -> Self:
+        caps = self.capabilities
+        if caps.embedding is None or Task.EMBEDDING not in caps.tasks:
+            raise ValueError(
+                "an embedding deployment must declare capabilities.embedding.dimensions"
+            )
+        return self
+
+    def descriptor(self) -> DeploymentDescriptor:
+        return self._descriptor(self.protocol)
+
+
+AnyDeployment = AnthropicMessagesDeployment | OpenAIChatDeployment | OpenAIEmbeddingsDeployment
+Deployment = Annotated[AnyDeployment, Field(discriminator="protocol")]
 
 
 class RoutingPolicy(_Frozen):
@@ -137,5 +174,5 @@ class Catalog(_Frozen):
         with Path(path).open("rb") as handle:
             return cls.from_mapping(tomllib.load(handle))
 
-    def get(self, model: str) -> AnthropicMessagesDeployment | OpenAIChatDeployment | None:
+    def get(self, model: str) -> AnyDeployment | None:
         return next((d for d in self.deployments if d.id == model), None)
