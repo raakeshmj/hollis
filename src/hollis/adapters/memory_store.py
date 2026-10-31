@@ -11,6 +11,7 @@ from hollis.runtime.events import EventEnvelope
 from hollis.runtime.store import (
     ConcurrencyConflict,
     DuplicateEventId,
+    RunListing,
     RunNotFound,
     duplicate_within,
     validate_batch,
@@ -36,6 +37,19 @@ class InMemoryRunStore:
                 raise DuplicateEventId(event.event_id)
         self._logs.setdefault(run_id, []).extend(events)
         self._event_ids.update(e.event_id for e in events)
+
+    async def list_runs(self, *, limit: int = 100, offset: int = 0) -> list[RunListing]:
+        listings = [
+            RunListing(
+                run_id=run_id,
+                created_at=log[0].occurred_at,
+                updated_at=log[-1].occurred_at,
+                version=len(log),
+            )
+            for run_id, log in self._logs.items()
+        ]
+        listings.sort(key=lambda r: (r.created_at, str(r.run_id)), reverse=True)
+        return listings[offset : offset + limit]
 
     async def read(self, run_id: UUID) -> list[EventEnvelope]:
         try:

@@ -14,8 +14,11 @@ Contract (shared by every adapter and enforced by tests/adapters/test_store_cont
 """
 
 from collections.abc import Sequence
-from typing import Protocol
+from datetime import datetime
+from typing import Protocol, runtime_checkable
 from uuid import UUID
+
+from pydantic import BaseModel, ConfigDict
 
 from hollis.runtime.events import EventEnvelope
 from hollis.runtime.state import RunState, fold
@@ -63,6 +66,24 @@ class RunStore(Protocol):
     ) -> None: ...
 
     async def read(self, run_id: UUID) -> list[EventEnvelope]: ...
+
+
+class RunListing(BaseModel):
+    """One stored run, without folding its log."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    run_id: UUID
+    created_at: datetime
+    updated_at: datetime
+    version: int
+
+
+@runtime_checkable
+class RunCatalog(Protocol):
+    """Optional store capability: enumerate runs, newest first. Both adapters implement it."""
+
+    async def list_runs(self, *, limit: int = 100, offset: int = 0) -> list[RunListing]: ...
 
 
 def validate_batch(run_id: UUID, expected_version: int, events: Sequence[EventEnvelope]) -> None:

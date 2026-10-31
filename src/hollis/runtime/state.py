@@ -36,6 +36,7 @@ from hollis.runtime.events import (
     ModelCallStarted,
     ModelResponseRecorded,
     ProviderFailure,
+    RunCancelled,
     RunCompleted,
     RunCreated,
     RunFailed,
@@ -70,10 +71,11 @@ class RunStatus(StrEnum):
     """The latest response's tool calls are being decided, approved or executed."""
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
     @property
     def is_terminal(self) -> bool:
-        return self in (RunStatus.COMPLETED, RunStatus.FAILED)
+        return self in (RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED)
 
 
 class InvalidEventSequence(Exception):
@@ -118,6 +120,16 @@ TRANSITIONS: Mapping[tuple[RunStatus | None, EventType], RunStatus] = {
     (S.TOOL_CALLS, E.CONTEXT_ASSEMBLED): S.TOOL_CALLS,
     (S.TOOL_CALLS, E.MODEL_CALL_STARTED): S.MODEL_CALL_IN_FLIGHT,
     (S.TOOL_CALLS, E.RUN_FAILED): S.FAILED,
+    **{
+        (status, E.RUN_CANCELLED): S.CANCELLED
+        for status in (
+            S.PENDING,
+            S.MODEL_CALL_IN_FLIGHT,
+            S.ATTEMPT_FAILED,
+            S.MODEL_RESPONDED,
+            S.TOOL_CALLS,
+        )
+    },
 }
 
 
@@ -141,6 +153,12 @@ class RunFailure(_Frozen):
     reason: FailureReason
     message: str
     kind: FailureKind | None = None
+
+
+class RunCancellation(_Frozen):
+    reason: str
+    by: str
+    interrupted: tuple[str, ...] = ()
 
 
 class UsageTotals(_Frozen):
@@ -215,6 +233,7 @@ class RunState(_Frozen):
     response: ModelResponse | None = None
     """The latest recorded model response."""
     failure: RunFailure | None = None
+    cancellation: RunCancellation | None = None
     usage: UsageTotals = UsageTotals()
     tool_calls_authorized: int = 0
     """Invocations decided as allow or require-approval (counted against the budget)."""
@@ -355,6 +374,11 @@ def apply(state: RunState | None, event: EventEnvelope) -> RunState:
         case RunCompleted():
             if state.response is not None and state.response.tool_calls:
                 raise InvalidEventSequence("cannot complete with unanswered tool calls")
+        case RunCancelled(reason=reason, by=by, interrupted=interrupted):
+            running = {i.invocation_id for i in state.pending_invocations if i.attempts > 0}
+            if not set(interrupted) <= running:
+                raise InvalidEventSequence("cancellation names invocations that were not running")
+            update["cancellation"] = RunCancellation(reason=reason, by=by, interrupted=interrupted)
     return state.model_copy(update=update)
 
 

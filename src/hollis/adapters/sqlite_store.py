@@ -20,6 +20,7 @@ import json
 import os
 import sqlite3
 from collections.abc import Generator, Sequence
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Self
 from uuid import UUID
@@ -29,6 +30,7 @@ from hollis.runtime.store import (
     ConcurrencyConflict,
     CorruptEvent,
     DuplicateEventId,
+    RunListing,
     RunNotFound,
     StoreError,
     StoreUnavailable,
@@ -92,6 +94,29 @@ class SqliteRunStore:
 
     async def read(self, run_id: UUID) -> list[EventEnvelope]:
         return await asyncio.to_thread(self._read, run_id)
+
+    async def list_runs(self, *, limit: int = 100, offset: int = 0) -> list[RunListing]:
+        def select() -> list[tuple[str, str, str, int]]:
+            with contextlib.closing(self._connect()) as conn:
+                try:
+                    return conn.execute(
+                        "SELECT run_id, MIN(occurred_at), MAX(occurred_at), MAX(sequence) "
+                        "FROM events GROUP BY run_id ORDER BY MIN(occurred_at) DESC, run_id DESC "
+                        "LIMIT ? OFFSET ?",
+                        (limit, offset),
+                    ).fetchall()
+                except sqlite3.OperationalError as exc:
+                    raise StoreUnavailable(str(exc)) from exc
+
+        return [
+            RunListing(
+                run_id=UUID(run_id),
+                created_at=datetime.fromisoformat(created),
+                updated_at=datetime.fromisoformat(updated),
+                version=version,
+            )
+            for run_id, created, updated, version in await asyncio.to_thread(select)
+        ]
 
     # --- synchronous operations, each run in a worker thread with its own connection ------
 

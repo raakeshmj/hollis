@@ -55,6 +55,7 @@ class EventType(StrEnum):
     ANSWER_GROUNDED = "answer_grounded"
     RUN_COMPLETED = "run_completed"
     RUN_FAILED = "run_failed"
+    RUN_CANCELLED = "run_cancelled"
 
 
 class _Payload(BaseModel):
@@ -266,6 +267,18 @@ class RunFailed(_Payload):
     """Kind of the last provider failure, if any."""
 
 
+class RunCancelled(_Payload):
+    """A person or system stopped the run. Terminal: nothing runs after it.
+
+    `interrupted` names tool invocations that had started and had no result when the run was
+    cancelled: their effects are unknown (ADR-0014), and the run record says so."""
+
+    type: Literal[EventType.RUN_CANCELLED] = EventType.RUN_CANCELLED
+    reason: str = Field(max_length=2000)
+    by: str = Field(min_length=1, max_length=200)
+    interrupted: tuple[str, ...] = ()
+
+
 AnyPayload = (
     RunCreated
     | ModelCallStarted
@@ -282,6 +295,7 @@ AnyPayload = (
     | AnswerGrounded
     | RunCompleted
     | RunFailed
+    | RunCancelled
 )
 EventPayload = Annotated[AnyPayload, Field(discriminator="type")]
 
@@ -303,6 +317,7 @@ CURRENT_SCHEMA_VERSIONS: Mapping[EventType, int] = {
     EventType.ANSWER_GROUNDED: 1,
     EventType.RUN_COMPLETED: 1,
     EventType.RUN_FAILED: 2,
+    EventType.RUN_CANCELLED: 1,
 }
 
 # Oldest version a reader accepts. Raised only for the pre-release baseline reset in M2:

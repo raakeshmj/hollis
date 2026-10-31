@@ -32,6 +32,11 @@ LEGAL: dict[tuple[RunStatus | None, EventType], RunStatus] = {
     (S.TOOL_CALLS, E.CONTEXT_ASSEMBLED): S.TOOL_CALLS,
     (S.TOOL_CALLS, E.MODEL_CALL_STARTED): S.MODEL_CALL_IN_FLIGHT,
     (S.TOOL_CALLS, E.RUN_FAILED): S.FAILED,
+    (S.PENDING, E.RUN_CANCELLED): S.CANCELLED,
+    (S.MODEL_CALL_IN_FLIGHT, E.RUN_CANCELLED): S.CANCELLED,
+    (S.ATTEMPT_FAILED, E.RUN_CANCELLED): S.CANCELLED,
+    (S.MODEL_RESPONDED, E.RUN_CANCELLED): S.CANCELLED,
+    (S.TOOL_CALLS, E.RUN_CANCELLED): S.CANCELLED,
 }
 
 ALL_PAIRS = list(itertools.product([None, *RunStatus], EventType))
@@ -53,11 +58,11 @@ def test_illegal_transition_raises(pair: tuple[RunStatus | None, EventType]) -> 
         next_status(*pair)
 
 
-@pytest.mark.parametrize("status", [S.COMPLETED, S.FAILED])
+@pytest.mark.parametrize("status", [S.COMPLETED, S.FAILED, S.CANCELLED])
 def test_terminal_states_accept_no_events(status: RunStatus) -> None:
     assert status.is_terminal
     assert not any(current == status for current, _ in TRANSITIONS)
 
 
 def test_every_pair_is_classified() -> None:
-    assert len(LEGAL) + len(ILLEGAL) == len(ALL_PAIRS) == 8 * 15
+    assert len(LEGAL) + len(ILLEGAL) == len(ALL_PAIRS) == 9 * 16

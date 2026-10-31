@@ -35,7 +35,7 @@ import asyncio
 import logging
 import random
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
@@ -61,6 +61,7 @@ from hollis.runtime.events import (
     AnswerGrounded,
     AnyPayload,
     ContextCompacted,
+    EventEnvelope,
     FailureReason,
     KnowledgeRetrieved,
     MemoryRecalled,
@@ -68,6 +69,7 @@ from hollis.runtime.events import (
     ModelCallStarted,
     ModelResponseRecorded,
     ProviderFailure,
+    RunCancelled,
     RunCompleted,
     RunCreated,
     RunFailed,
@@ -202,6 +204,11 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+type RunObserver = Callable[[EventEnvelope, RunState], Awaitable[None]]
+"""Called after each event is durably appended, with the state it produced. For observation only
+(live streams, indexes): an observer that raises is logged and never affects the run."""
+
+
 class _Writer:
     """Serializes appends so concurrent tool executions update one consistent state."""
 
@@ -235,6 +242,7 @@ class Runner:
         memory: MemoryRecall | None = None,
         summarizer: Summarizer | None = None,
         knowledge: KnowledgeRetrieval | None = None,
+        observers: Sequence[RunObserver] = (),
     ) -> None:
         """`policy` defaults to DefaultToolPolicy (trusted read-only tools allowed, everything
         else requires approval). Without an `approver`, calls requiring approval are denied.
@@ -257,6 +265,7 @@ class Runner:
         self._memory = memory
         self._summarizer: Summarizer = summarizer or DeterministicSummarizer()
         self._knowledge = knowledge
+        self._observers = tuple(observers)
 
     # --- public API -----------------------------------------------------------------------------
 
@@ -311,6 +320,22 @@ class Runner:
                 return advanced  # blocked on a pending approval
             state = advanced
         return state
+
+    async def cancel(self, run_id: UUID, *, by: str, reason: str = "") -> RunState:
+        """Stop a run for good. A terminal run is returned unchanged. Tool invocations that had
+        started without a result are named in the event: their effects are unknown.
+
+        The caller must make sure no other coroutine is executing the run (the platform's run
+        supervisor cancels its task first); otherwise one of the two appends conflicts."""
+        state = await load_run(self._store, run_id)
+        if state.status.is_terminal:
+            return state
+        interrupted = tuple(i.invocation_id for i in state.pending_invocations if i.attempts > 0)
+        log.info("run %s: cancelled by %s", run_id, by)
+        payload = RunCancelled(
+            reason=self._redactor.redact(reason)[:2000], by=by, interrupted=interrupted
+        )
+        return await self._append(state, run_id, payload)
 
     async def pending_approvals(self, run_id: UUID) -> list[ApprovalRequest]:
         state = await load_run(self._store, run_id)
@@ -1078,6 +1103,11 @@ class Runner:
         )
         next_state = apply(state, event)  # never persist an event the fold would reject
         await self._store.append(run_id, version, [event])
+        for observer in self._observers:
+            try:
+                await observer(event, next_state)
+            except Exception as exc:  # observation must never affect execution
+                log.warning("run observer failed (%s)", type(exc).__name__)
         return next_state
 
 
