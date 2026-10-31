@@ -13,6 +13,11 @@ Model-call semantics (ADR-0006, amended by ADR-0007):
   without an outcome on resume) is *ambiguous*: the provider may have generated and charged for
   a response. The run's `ambiguous_policy` decides whether to retry; the default retries only
   when the provider declares it deduplicates requests. Exactly-once execution is not claimed.
+
+Secret handling (ADR-0009): failure messages and log records are redacted before they are
+written; registered secret values are also removed from recorded response content. Run input is
+never rewritten (recovery must resend the identical request), so `create` rejects input that
+contains a registered secret.
 """
 
 import asyncio
@@ -50,6 +55,7 @@ from hollis.runtime.policy import (
     default_ambiguous_policy,
     retry_delay,
 )
+from hollis.runtime.redaction import Redactor
 from hollis.runtime.state import RunState, RunStatus, apply
 from hollis.runtime.store import RunStore, load_run
 
@@ -65,6 +71,10 @@ class RunSpec(BaseModel):
     budget: RunBudget
     ambiguous_policy: AmbiguousOutcomePolicy | None = None
     """None selects the default for the provider's capabilities."""
+
+
+class SecretInRunInput(ValueError):
+    """Run input or instructions contain a registered secret value; nothing was persisted."""
 
 
 class ProviderMismatch(Exception):
@@ -91,6 +101,7 @@ class Runner:
         new_id: Callable[[], UUID] = uuid4,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         jitter: Callable[[], float] = random.random,
+        redactor: Redactor | None = None,
     ) -> None:
         self._store = store
         self._provider = provider
@@ -98,8 +109,13 @@ class Runner:
         self._new_id = new_id
         self._sleep = sleep
         self._jitter = jitter
+        self._redactor = redactor or Redactor()
 
     async def create(self, spec: RunSpec) -> RunState:
+        if self._redactor.contains_secret(spec.input) or (
+            spec.instructions is not None and self._redactor.contains_secret(spec.instructions)
+        ):
+            raise SecretInRunInput("run input or instructions contain a registered secret")
         capabilities = self._provider.capabilities
         policy = spec.ambiguous_policy or default_ambiguous_policy(
             provider_deduplicates=capabilities.deduplicates_requests
@@ -202,12 +218,16 @@ class Runner:
             return await self._record_failure(state, failure)
         # Any other exception propagates: the run stays in flight and resume records it as
         # an interrupted (ambiguous) attempt.
+        content = self._redactor.redact_known(response.content)
+        if content != response.content:
+            response = response.model_copy(update={"content": content})
         recorded = ModelResponseRecorded(
             operation_id=operation_id, attempt=state.attempts, response=response
         )
         return await self._append(state, state.run_id, recorded)
 
     async def _record_failure(self, state: RunState, failure: ProviderFailure) -> RunState:
+        failure = failure.model_copy(update={"message": self._redactor.redact(failure.message)})
         log.warning(
             "run %s attempt %d failed: %s (%s): %s",
             state.run_id,
@@ -228,6 +248,7 @@ class Runner:
         message: str,
         failure: ProviderFailure | None,
     ) -> RunState:
+        message = self._redactor.redact(message)
         log.warning("run %s failed: %s: %s", state.run_id, reason, message)
         payload = RunFailed(
             operation_id=operation_id_for(state.run_id),
