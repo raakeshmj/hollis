@@ -7,9 +7,9 @@ IDs are stable. Cite them from ADRs, plans and tests (for example, "covers NFR-2
 | ID | Requirement | Milestone |
 |---|---|---|
 | FR-1 | Define an agent in Python: instructions, model selection, tools and limits | M1–M3 |
-| FR-2 | Execute a run to completion, failure or cancellation, with an explicit state at every point | M1 |
+| FR-2 | Execute a run to completion, failure or cancellation, with an explicit state at every point | M1 (completion, failure); cancellation later |
 | FR-3 | Persist every run as an ordered record of events (model calls, tool calls, results, state transitions) | M1 |
-| FR-4 | Resume an interrupted run from its persisted record without repeating completed side effects | M1 |
+| FR-4 | Resume an interrupted run from its persisted record. Never re-invoke a side effect whose result is durably recorded. Retry unrecorded outcomes under the same operation id, with no exactly-once claim ([ADR-0006](../decisions/0006-model-call-execution-semantics.md)). | M1 |
 | FR-5 | Call models through a provider-neutral interface, so swapping providers needs no agent code changes | M1 (fake), M2 (real) |
 | FR-6 | Define tools with typed, validated inputs and outputs | M3 |
 | FR-7 | Execute tools under an explicit permission and sandbox policy | M3 |

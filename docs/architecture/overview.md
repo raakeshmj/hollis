@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Status: direction-setting. Nothing below is implemented yet except the CLI stub. Each section separates **decided** from **open**. Decided items link to ADRs, and open items name the milestone that resolves them.
+Status: direction-setting. Implemented so far (M1): the runtime core (`hollis.runtime`: events, state fold, RunStore and ModelProvider ports, single-turn runner) and adapters (`hollis.adapters`: in-memory and SQLite stores, scripted fake provider). Each section separates **decided** from **open**. Decided items link to ADRs, and open items name the milestone that resolves them.
 
 ## Shape
 
@@ -12,7 +12,7 @@ Hollis is a **modular monolith**: one Python package (`hollis`) with internal mo
                       +---- interfaces depend on ---+
                                      |
                               runtime core
-     (run state machine · event log · step loop · budgets · policy)
+     (run state machine · event log · runner · budgets · policy)
                      |                |                 |
               ModelProvider       RunStore          ToolExecutor      <- ports (in core)
                  port               port               port
@@ -26,7 +26,7 @@ Packages appear only when there is code to put in them. Nothing gets created to 
 
 | Component | Responsibility | Milestone |
 |---|---|---|
-| **Runtime core** | Owns a run's lifecycle: state machine, step loop, budget enforcement, cancellation, resume. The only writer of run events. | M1 |
+| **Runtime core** | Owns a run's lifecycle: state machine, runner, resume; later budgets and cancellation. The only writer of run events. | M1 (single turn) |
 | **Event log / run record** | Append-only, ordered record of everything that happened in a run. The source of truth for inspection, resume and evaluation. | M1 |
 | **Model provider port** | Provider-neutral request and response types (messages, tool calls, usage). Adapters translate to vendor APIs. | M1 (fake), M2 |
 | **Storage port** | Persists run records and, later, memory. Adapters: in-memory, SQLite, later others. | M1 |
@@ -38,12 +38,22 @@ Packages appear only when there is code to put in them. Nothing gets created to 
 
 ## Runtime and harness
 
-**Decided.** The runtime is the product's foundation. A run is an explicit state machine (for example, `pending → running → {completed, failed, cancelled}`, with a resumable `interrupted` state). Transitions are validated in code (NFR-1). The core is async for I/O-bound paths: model calls, tool execution and storage ([ADR-0003](../decisions/0003-async-first-runtime.md)).
+**Decided.** The runtime is the product's foundation. The core is async for I/O-bound paths: model calls, tool execution and storage ([ADR-0003](../decisions/0003-async-first-runtime.md)).
 
-**Proposed.** Run state is derived from an append-only event log, and resume works by replaying it ([ADR-0005](../decisions/0005-event-recorded-run-state.md)). Side-effecting steps record their intent before execution and their result after, so resume can tell which steps finished.
+- **State from events.** Run state is a pure fold over an append-only, versioned event log, with an explicit transition table (NFR-1, [ADR-0005](../decisions/0005-event-recorded-run-state.md)).
+- **M1 states:** `pending → model_call_in_flight → model_responded → completed`, plus `failed`, which can only be reached from `model_call_in_flight`.
+- **No `interrupted` status.** A crashed run is simply a non-terminal run with no active runner.
+- **No `cancelled` status** until cancellation exists.
+- **One code path.** `Runner.execute` performs both first execution and recovery.
+- **Model-call semantics** ([ADR-0006](../decisions/0006-model-call-execution-semantics.md)):
+  - A stable operation id per logical call.
+  - An intent is recorded before each attempt.
+  - The provider is never reinvoked after a response is recorded.
+  - Invocation is at-least-once on ambiguous outcomes. Exactly-once is **not** claimed.
 
 **Open.**
-- Exact state set and event schema (M1).
+- Multi-turn and tool-driven execution, and the events they need (M3).
+- Ambiguous-outcome policy per provider capability, and retry/resume limits (M2).
 - Idempotency strategy for non-repeatable tool side effects (M3).
 - Concurrency model for parallel tool calls (M3).
 
@@ -81,11 +91,14 @@ Packages appear only when there is code to put in them. Nothing gets created to 
 
 **Decided.** Local-first (NFR-8). Storage sits behind a port.
 
-**Proposed.** SQLite is the initial durable store for run records ([ADR-0004](../decisions/0004-local-first-sqlite-persistence.md)).
+**Decided.** SQLite is the initial durable store for run records ([ADR-0004](../decisions/0004-local-first-sqlite-persistence.md)):
+- Stdlib `sqlite3`, one connection per operation in a worker thread.
+- `BEGIN IMMEDIATE` appends, the default rollback journal, `PRAGMA user_version` migrations.
+- Assumes a single process and a single active runner. Not encrypted at rest.
 
 **Open.**
 - Cloud deployment target and packaging. Expected to be one container running the same monolith plus a networked database adapter, decided when a cloud use case is concrete.
-- Schema migration tooling (M1, if SQLite is accepted).
+- Leases or fencing for multiple executors (with cloud deployment).
 
 ## Evaluation and observability
 
@@ -107,9 +120,11 @@ See [testing.md](testing.md).
 | Modular monolith, Python 3.12+, uv | Accepted | ADR-0001 |
 | Ports and adapters; vendor-neutral core | Accepted | ADR-0002 |
 | Async-first for I/O-bound runtime paths | Accepted | ADR-0003 |
-| SQLite as initial persistence | Proposed, decided in M1 | ADR-0004 |
-| Event-recorded run state and replay-based resume | Proposed, validated in M1 | ADR-0005 |
-| Pydantic v2 for validated domain and boundary types | Product constraint, adopted in M1 when first used | — |
+| SQLite as initial persistence (no WAL) | Accepted (M1) | ADR-0004 |
+| Event-recorded run state, fold, optimistic concurrency | Accepted (M1) | ADR-0005 |
+| Model-call semantics: operation ids, at-least-once, no exactly-once | Accepted (M1) | ADR-0006 |
+| Pydantic v2 for validated domain and boundary types | Adopted (M1) | — |
+| Ambiguous-outcome policy per provider, retry limits | Open | M2 |
 | First real provider, streaming shape | Open | M2 |
 | Sandbox technology, tool idempotency | Open | M3 |
 | Retrieval backend | Open, chosen by benchmark | M4 |

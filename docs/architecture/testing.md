@@ -13,24 +13,25 @@
 
 | Layer | What | When |
 |---|---|---|
-| Unit | Pure logic: state transitions, validation, budget arithmetic | From M1 |
+| Unit | Pure logic: state transitions, fold, serialization (incl. Hypothesis properties) | From M1 |
 | Contract | One shared test suite every adapter of a port must pass (for example, in-memory and SQLite `RunStore`) | From M1 |
-| Integration | Full runs through the runtime with the scripted fake provider | From M1 |
+| Integration | Full runs through the runtime with the scripted fake provider, incl. crash injection | From M1 |
 | Architecture | Import-boundary tests (AST-based, stdlib only) | From M1 |
 | Behavioral evals | Assertions on agent trajectories against real models | M2+ |
 | End-to-end benchmarks | Task-level success on realistic suites | Later |
 
 ## Reliability and security properties to verify
 
-Each property maps to a requirement and gets a test when its component exists.
+Each property maps to a requirement and gets a test when its component exists. ✅ marks properties tested as of M1.
 
 | Property | Requirement | First tested |
 |---|---|---|
-| Illegal state transitions are rejected | NFR-1 | M1 |
-| Crash at any step boundary leaves the run resumable or explicitly failed | NFR-2, FR-4 | M1 |
-| Resume does not re-execute completed side-effecting steps | FR-4 | M1 (model steps), M3 (tools) |
-| Replaying a recorded run with the fake provider reproduces the same state | NFR-3 | M1 |
-| Core modules import no adapter or vendor SDK | NFR-7 | M1 |
+| Illegal state transitions are rejected | NFR-1 | ✅ M1 `tests/runtime/` |
+| Crash at any step boundary leaves the run resumable or explicitly failed | NFR-2, FR-4 | ✅ M1 `tests/recovery/` |
+| A durably recorded response never reinvokes the provider; ambiguous outcomes retry under the same operation id | FR-4 | ✅ M1 (model calls), M3 (tools) |
+| Folding a recorded log reproduces the same state; serialization round-trips | NFR-3 | ✅ M1 (Hypothesis) |
+| Stale appends never succeed; batches are atomic; both stores pass one contract | NFR-2 | ✅ M1 `tests/adapters/` |
+| Core modules import no adapter or vendor SDK | NFR-7 | ✅ M1 `tests/architecture/` |
 | Budgets stop a run cleanly when exceeded | NFR-6 | M2 |
 | Secrets never appear in persisted events or logs | NFR-4 | M2 |
 | Tool arguments failing schema validation never execute | NFR-4, FR-6 | M3 |

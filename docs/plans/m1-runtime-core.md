@@ -1,6 +1,6 @@
 # M1 Plan: Runtime Core (revised)
 
-Status: approved 2026-10-31. Supersedes the M0 draft of this plan.
+Status: implemented 2026-10-31 on branch `m1-runtime-core`. Supersedes the M0 draft of this plan. See "Implementation notes" at the end for deviations.
 
 ## Context
 The M1 proposal in `docs/plans/m1-runtime-core.md` (written in M0) was reviewed. The runtime-first direction is approved, but the review found four problems:
@@ -289,3 +289,13 @@ Real providers, streaming, tools, multi-turn execution, budgets and step limits,
 - **Open:** who triggers recovery after a crash. In M1 it's an explicit `execute(run_id)`. A startup scan needs a `list_runs` store operation, deferred to M5 (CLI).
 - **Open:** a limit on resume attempts to stop crash loops, with M2's retry policy.
 - **Open:** recording the assembled request per call, with M4 context assembly.
+
+## Implementation notes (deviations from this plan)
+
+- **`IntegrityError` mapping simplified.** The append pre-checks run under the `BEGIN IMMEDIATE` write lock, so key violations can't reach the insert. Rather than mapping unreachable branches to contract errors, any database rejection during insert raises `StoreError`, and the whole batch rolls back (tested with a rejecting trigger).
+- **Lint configuration:**
+  - Ruff `N818` (exception names must end in `Error`) is disabled, because the contract uses domain names such as `ConcurrencyConflict`.
+  - `ASYNC2xx` (blocking I/O inside coroutines) is exempted under `tests/` only.
+- **pytest configuration:** `--import-mode=importlib` and `pythonpath = ["."]`, so nested test directories can share `tests/support/`.
+- **`RunState` stores** status, version, run inputs, `operation_id`, `attempts`, `response` and `failure`, as planned. The fold additionally requires `ModelResponseRecorded.attempt` to equal the latest attempt.
+- **Resolved versions:** pydantic 2.14.2 (runtime); hypothesis 6.170.14 and pytest-asyncio 1.4.1 (dev).

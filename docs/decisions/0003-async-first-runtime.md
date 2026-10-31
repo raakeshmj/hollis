@@ -28,5 +28,5 @@ Agent runs are dominated by I/O wait: model calls (seconds each), tool execution
 
 ## Consequences
 
-- M1 adds an async test runner. The choice between pytest-asyncio and a minimal in-house fixture is made in M1, and any new dependency must be justified there.
+- M1 adopted pytest-asyncio (auto mode) for native async tests.
 - Ruff `ASYNC` rules are enabled to catch blocking calls inside coroutines.

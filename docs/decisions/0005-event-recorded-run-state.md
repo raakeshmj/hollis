@@ -1,32 +1,46 @@
 # ADR-0005: Run state derived from an append-only event log
 
-- Status: Proposed. Validated by M1.
+- Status: Accepted (2026-10-31, end of M1), with the refinements below.
 - Date: 2026-10-31
 
 ## Context
 
-The priorities are correctness, recoverability and explicit state (NFR-1, NFR-2, NFR-5). Resume must not repeat completed side effects (FR-4). Behavioral evaluation needs structured trajectories of what an agent did (FR-13, see [research](../research/harness-engineering.md)). Inspection needs a complete history (NFR-9).
+The priorities are correctness, recoverability and explicit state (NFR-1, NFR-2, NFR-5). Resume must not repeat work that is durably recorded (FR-4). Behavioral evaluation needs structured trajectories (FR-13, see [research](../research/harness-engineering.md)). Inspection needs a complete history (NFR-9).
 
-## Decision (proposed)
+## Decision
 
-- Each run has an **append-only, ordered event log**: run created, state transitions, model request and response, tool call intent and result, budget events, errors.
-- The current run state is a **pure function of the event log** (a fold). The runtime appends events and never mutates state in place.
-- Side-effecting steps append an *intent* event before executing and a *result* event after. On resume, an intent without a result marks a step whose outcome is unknown, handled by policy (retry if idempotent, otherwise fail explicitly).
-- Events are versioned, typed models. The schema is part of the public contract once released.
+- **Append-only log.** Each run has an ordered event log of `EventEnvelope` records (`hollis.runtime.events`). Each record has: `event_id` (unique store-wide), `run_id`, `sequence` (contiguous from 1, equal to the run version), `schema_version`, `occurred_at` (UTC) and a typed `payload` discriminated by `type`.
+- **Vocabulary.** M1 has only the events the runtime emits: `RunCreated`, `ModelCallStarted`, `ModelResponseRecorded`, `RunCompleted`, `RunFailed`. New event types are added only when a behavior needs them.
+- **State is a pure fold.** `apply` and `fold` in `hollis.runtime.state` derive the state from the log, using an explicit transition table. Invalid logs raise `InvalidEventSequence`: gaps, reorders, mixed runs, duplicate ids, illegal transitions, and operation-id or attempt mismatches. Nothing is skipped.
+- **Validate before persisting.** The runtime builds each event, validates it with `apply` against the current state, and only then appends it.
+- **Optimistic concurrency.** `append(run_id, expected_version, events)` is atomic and always fails on a stale version. That's the only coordination mechanism in M1; there are no leases.
+- **Intent per attempt.** Each physical model attempt appends a `ModelCallStarted(operation_id, attempt)` intent *before* invoking the provider. Execution semantics are in ADR-0006.
+- **Schema evolution.**
+  - Payload versions are per event type.
+  - Changing a payload's shape means bumping its version and adding an upcaster. Stored events are never rewritten.
+  - An unknown type or version raises `UnknownEventSchema`.
+  - M1 has version 1 only. The registry exists, with no upcasters and no snapshots.
 
 ## Alternatives considered
 
-- **Mutable run row plus a separate audit log**: two sources of truth that can diverge, and resume logic has to reconcile them.
-- **Checkpointing full state snapshots only**: loses the trajectory needed for evals and debugging, and doesn't capture in-flight side effects.
-- **Adopting an external durable-workflow engine**: strong guarantees, but heavy infrastructure, which conflicts with local-first and modular-monolith constraints.
+- **Mutable run row plus a separate audit log**: two sources of truth that can diverge.
+- **Snapshots only**: loses the trajectory, and doesn't capture in-flight side effects.
+- **An external durable-workflow engine**: heavy infrastructure, conflicting with local-first and the modular monolith.
+- **Store-allocated sequences**: the caller allocating `expected_version + n` keeps events fully determined before persistence, so they can be validated by the fold first. The store still rejects anything that isn't contiguous.
 
 ## Trade-offs
 
-- Gains: a single source of truth, deterministic replay with a fake provider, trajectories for free, and natural audit.
-- Costs: event schema design and versioning discipline, and log growth (snapshots can be added later as an optimization without changing semantics).
+- Gains: one source of truth, deterministic replay, trajectories for free, explicit concurrency failures.
+- Costs: discipline about event schemas and versioning, and log growth (snapshots can be added later without changing semantics). The strict fold means that any future relaxation must be deliberate.
 
-## Consequences / validation in M1
+## Consequences and evidence (M1)
 
-- Property: replaying a recorded log reproduces the same state (tested).
-- Crash-injection tests at every step boundary.
-- If the fold becomes unworkable for real flows, revise before M2.
+- The transition table is tested exhaustively, covering all 30 status × event pairs (`tests/runtime/test_transitions.py`).
+- Hypothesis tests run over generated logs (`tests/runtime/test_fold.py`, `test_event_serialization.py`):
+  - Valid logs fold.
+  - Every prefix is valid.
+  - `fold` equals iterated `apply`.
+  - Structural and operation/attempt mutations are rejected.
+  - Serialization round-trips.
+- Crash recovery is tested at every boundary against both stores (`tests/recovery/`).
+- Open for M3: multi-turn and tool events will extend the vocabulary and transition table, with expected revisions to the state shape.
