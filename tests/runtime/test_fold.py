@@ -14,6 +14,7 @@ from hollis.runtime.events import (
     RunFailed,
 )
 from hollis.runtime.model import ModelResponse
+from hollis.runtime.runner import operation_id_for
 from hollis.runtime.state import (
     IllegalTransition,
     InvalidEventSequence,
@@ -22,7 +23,7 @@ from hollis.runtime.state import (
     apply,
     fold,
 )
-from tests.support.events import build_log, happy_payloads, operation_id_for, valid_logs
+from tests.support.events import build_log, happy_payloads, valid_logs
 
 RUN = uuid4()
 OP = operation_id_for(RUN)

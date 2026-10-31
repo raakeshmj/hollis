@@ -9,6 +9,7 @@ import pytest
 from hypothesis import given, settings
 
 from hollis.runtime.events import EventEnvelope, ModelCallStarted, RunCreated
+from hollis.runtime.runner import operation_id_for
 from hollis.runtime.state import RunStatus
 from hollis.runtime.store import (
     ConcurrencyConflict,
@@ -18,13 +19,8 @@ from hollis.runtime.store import (
     RunStore,
     load_run,
 )
-from tests.support.events import build_log, happy_payloads, operation_id_for, valid_logs
+from tests.support.events import build_log, happy_payloads, valid_logs
 from tests.support.stores import STORE_KINDS, make_store
-
-
-@pytest.fixture(params=STORE_KINDS)
-async def store(request: pytest.FixtureRequest, tmp_path: Path) -> RunStore:
-    return await make_store(request.param, tmp_path)
 
 
 def _created(run_id: UUID) -> list[EventEnvelope]:

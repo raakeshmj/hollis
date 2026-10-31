@@ -17,12 +17,9 @@ from hollis.runtime.events import (
     new_event,
 )
 from hollis.runtime.model import ModelResponse, Usage
+from hollis.runtime.runner import operation_id_for
 
 T0 = datetime(2026, 1, 1, tzinfo=UTC)
-
-
-def operation_id_for(run_id: UUID) -> str:
-    return f"{run_id}/model/0"
 
 
 def build_log(
