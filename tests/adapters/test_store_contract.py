@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 import pytest
 from hypothesis import given, settings
 
-from hollis.runtime.events import EventEnvelope, ModelCallStarted, RunCreated
+from hollis.runtime.events import EventEnvelope, ModelCallStarted
 from hollis.runtime.runner import operation_id_for
 from hollis.runtime.state import RunStatus
 from hollis.runtime.store import (
@@ -19,12 +19,12 @@ from hollis.runtime.store import (
     RunStore,
     load_run,
 )
-from tests.support.events import build_log, happy_payloads, valid_logs
+from tests.support.events import build_log, created, happy_payloads, valid_logs
 from tests.support.stores import STORE_KINDS, make_store
 
 
 def _created(run_id: UUID) -> list[EventEnvelope]:
-    return build_log(run_id, [RunCreated(model="m", input="x")])
+    return build_log(run_id, [created()])
 
 
 async def test_create_then_read(store: RunStore) -> None:

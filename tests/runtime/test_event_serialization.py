@@ -11,12 +11,11 @@ from hollis.runtime.events import (
     EventDecodeError,
     EventEnvelope,
     EventType,
-    RunCreated,
     UnknownEventSchema,
     deserialize_event,
     serialize_event,
 )
-from tests.support.events import T0, build_log, happy_payloads, valid_logs
+from tests.support.events import T0, build_log, created, happy_payloads, valid_logs
 
 
 @given(valid_logs())
@@ -26,7 +25,7 @@ def test_round_trip_preserves_every_event(log: list[EventEnvelope]) -> None:
 
 
 def test_serialized_form_is_versioned_json() -> None:
-    event = build_log(uuid4(), [RunCreated(model="m", input="x")])[0]
+    event = build_log(uuid4(), [created()])[0]
     data = json.loads(serialize_event(event))
     assert set(data) == {
         "event_id",
@@ -36,7 +35,7 @@ def test_serialized_form_is_versioned_json() -> None:
         "occurred_at",
         "payload",
     }
-    assert data["schema_version"] == 1
+    assert data["schema_version"] == 2
     assert data["payload"]["type"] == "run_created"
 
 
@@ -52,7 +51,7 @@ def test_event_type_is_derived_from_payload() -> None:
 
 
 def _raw(**overrides: object) -> str:
-    data = json.loads(serialize_event(build_log(uuid4(), [RunCreated(model="m", input="x")])[0]))
+    data = json.loads(serialize_event(build_log(uuid4(), [created()])[0]))
     for key, value in overrides.items():
         if key == "payload_type":
             data["payload"]["type"] = value
@@ -66,7 +65,11 @@ def test_unknown_event_type_is_rejected() -> None:
         deserialize_event(_raw(payload_type="run_teleported"))
 
 
-@pytest.mark.parametrize("version", [0, CURRENT_SCHEMA_VERSIONS[EventType.RUN_CREATED] + 1])
+@pytest.mark.parametrize(
+    "version",
+    [0, 1, CURRENT_SCHEMA_VERSIONS[EventType.RUN_CREATED] + 1],
+    ids=["zero", "pre-m2-baseline", "future"],
+)
 def test_unsupported_schema_version_is_rejected(version: int) -> None:
     with pytest.raises(UnknownEventSchema, match="unsupported schema_version"):
         deserialize_event(_raw(schema_version=version))
@@ -83,7 +86,7 @@ def test_malformed_events_raise_decode_error(raw: str) -> None:
 
 
 def test_envelope_requires_utc_timestamp() -> None:
-    event = build_log(uuid4(), [RunCreated(model="m", input="x")])[0]
+    event = build_log(uuid4(), [created()])[0]
     data = event.model_dump()
     data["occurred_at"] = T0.astimezone(timezone(timedelta(hours=5, minutes=30)))
     with pytest.raises(ValidationError, match="UTC"):
@@ -94,6 +97,6 @@ def test_envelope_requires_utc_timestamp() -> None:
 
 
 def test_envelope_rejects_non_current_schema_version_in_memory() -> None:
-    event = build_log(uuid4(), [RunCreated(model="m", input="x")])[0]
+    event = build_log(uuid4(), [created()])[0]
     with pytest.raises(ValidationError, match="not current"):
-        EventEnvelope.model_validate({**event.model_dump(), "schema_version": 2})
+        EventEnvelope.model_validate({**event.model_dump(), "schema_version": 3})

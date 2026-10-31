@@ -7,13 +7,15 @@ from hypothesis import strategies as st
 from hollis.runtime.events import (
     AnyPayload,
     EventEnvelope,
+    FailureReason,
+    ModelCallFailed,
     ModelCallStarted,
     ModelResponseRecorded,
     RunCompleted,
-    RunCreated,
     RunFailed,
 )
-from hollis.runtime.model import ModelResponse
+from hollis.runtime.model import FailureKind, ModelResponse, Usage
+from hollis.runtime.policy import RunBudget
 from hollis.runtime.runner import operation_id_for
 from hollis.runtime.state import (
     IllegalTransition,
@@ -23,7 +25,7 @@ from hollis.runtime.state import (
     apply,
     fold,
 )
-from tests.support.events import build_log, happy_payloads, valid_logs
+from tests.support.events import build_log, created, failure, happy_payloads, valid_logs
 
 RUN = uuid4()
 OP = operation_id_for(RUN)
@@ -37,77 +39,132 @@ def test_happy_path_folds_to_completed() -> None:
     assert state.attempts == 1
     assert state.response == ModelResponse(content="hi")
     assert state.failure is None
+    assert state.last_failure is None
 
 
 def test_retries_are_counted_as_attempts() -> None:
     state = fold(build_log(RUN, happy_payloads(RUN, attempts=3)))
     assert state.attempts == 3
     assert state.status is RunStatus.COMPLETED
+    assert state.last_failure == failure()
 
 
-def test_failure_is_recorded() -> None:
+def test_run_state_carries_configuration_from_run_created() -> None:
+    state = fold(build_log(RUN, [created(budget=RunBudget(max_output_tokens=9, deadline_s=60))]))
+    assert state.provider == "scripted-fake"
+    assert state.budget.max_output_tokens == 9
+    assert state.deadline is not None
+    assert (state.deadline - state.created_at).total_seconds() == 60
+
+
+def test_usage_is_accumulated_from_recorded_responses() -> None:
+    reply = ModelResponse(content="x", usage=Usage(input_tokens=7, output_tokens=3))
     log = build_log(
         RUN,
         [
-            RunCreated(model="m", input="x"),
+            created(),
             ModelCallStarted(operation_id=OP, attempt=1),
-            RunFailed(operation_id=OP, error_type="Rejected", message="nope"),
+            ModelResponseRecorded(operation_id=OP, attempt=1, response=reply),
+        ],
+    )
+    assert fold(log).usage.model_dump() == {"input_tokens": 7, "output_tokens": 3}
+
+
+def test_failure_is_recorded() -> None:
+    rejected = failure(FailureKind.INVALID_REQUEST, "bad")
+    log = build_log(
+        RUN,
+        [
+            created(),
+            ModelCallStarted(operation_id=OP, attempt=1),
+            ModelCallFailed(operation_id=OP, attempt=1, failure=rejected),
+            RunFailed(
+                operation_id=OP,
+                reason=FailureReason.PROVIDER_ERROR,
+                message="bad",
+                kind=FailureKind.INVALID_REQUEST,
+            ),
         ],
     )
     state = fold(log)
     assert state.status is RunStatus.FAILED
     assert state.failure is not None
-    assert state.failure.error_type == "Rejected"
+    assert (state.failure.reason, state.failure.kind) == (
+        FailureReason.PROVIDER_ERROR,
+        FailureKind.INVALID_REQUEST,
+    )
+    assert state.last_failure == rejected
+
+
+def _started(n: int) -> ModelCallStarted:
+    return ModelCallStarted(operation_id=OP, attempt=n)
+
+
+def _failed(n: int, kind: FailureKind = FailureKind.OVERLOADED) -> ModelCallFailed:
+    return ModelCallFailed(operation_id=OP, attempt=n, failure=failure(kind))
+
+
+def _run_failed(reason: FailureReason, op: str = OP) -> RunFailed:
+    return RunFailed(operation_id=op, reason=reason, message="m")
+
+
+_REPLY = ModelResponse(content="x")
 
 
 @pytest.mark.parametrize(
     ("payloads", "reason"),
     [
         ([], "empty"),
-        ([ModelCallStarted(operation_id=OP, attempt=1)], "first event not RunCreated"),
-        ([RunCreated(model="m", input="x"), RunCreated(model="m", input="x")], "created twice"),
+        ([_started(1)], "first event not RunCreated"),
+        ([created(), created()], "created twice"),
+        ([created(), _started(2)], "attempt skips"),
+        ([created(), _started(1), _started(2)], "retry without a recorded outcome"),
         (
-            [RunCreated(model="m", input="x"), ModelCallStarted(operation_id=OP, attempt=2)],
-            "attempt skips",
-        ),
-        (
-            [
-                RunCreated(model="m", input="x"),
-                ModelCallStarted(operation_id=OP, attempt=1),
-                ModelCallStarted(operation_id="other", attempt=2),
-            ],
+            [created(), _started(1), _failed(1), ModelCallStarted(operation_id="other", attempt=2)],
             "operation id changes between attempts",
         ),
         (
             [
-                RunCreated(model="m", input="x"),
-                ModelCallStarted(operation_id=OP, attempt=1),
-                ModelResponseRecorded(
-                    operation_id="other", attempt=1, response=ModelResponse(content="x")
-                ),
+                created(),
+                _started(1),
+                ModelResponseRecorded(operation_id="other", attempt=1, response=_REPLY),
             ],
             "response for another operation",
         ),
         (
             [
-                RunCreated(model="m", input="x"),
-                ModelCallStarted(operation_id=OP, attempt=1),
-                ModelCallStarted(operation_id=OP, attempt=2),
-                ModelResponseRecorded(
-                    operation_id=OP, attempt=1, response=ModelResponse(content="x")
-                ),
+                created(),
+                _started(1),
+                _failed(1),
+                _started(2),
+                ModelResponseRecorded(operation_id=OP, attempt=1, response=_REPLY),
             ],
             "response attributed to a stale attempt",
         ),
+        ([created(), _started(1), _failed(2)], "failure for another attempt"),
+        (
+            [created(), _started(1), _failed(1), _run_failed(FailureReason.BUDGET_EXHAUSTED, "x")],
+            "run failure for another operation",
+        ),
+        ([created(), _started(1), _run_failed(FailureReason.BUDGET_EXHAUSTED)], "fail in flight"),
+        (
+            [created(), _started(1), _failed(1), _run_failed(FailureReason.PROVIDER_ERROR)],
+            "provider_error after a retryable failure",
+        ),
+        (
+            [created(), _started(1), _failed(1), _run_failed(FailureReason.AMBIGUOUS_OUTCOME)],
+            "ambiguous_outcome after a not-processed failure",
+        ),
         (
             [
-                RunCreated(model="m", input="x"),
-                ModelCallStarted(operation_id=OP, attempt=1),
-                RunFailed(operation_id="other", error_type="E", message="m"),
+                created(budget=RunBudget(max_output_tokens=1, max_attempts=1)),
+                _started(1),
+                _failed(1),
+                _started(2),
             ],
-            "failure for another operation",
+            "attempt beyond max_attempts",
         ),
-        ([RunCreated(model="m", input="x"), RunCompleted()], "completed without response"),
+        ([created(), _started(1), RunCompleted()], "completed without response"),
         ([*happy_payloads(RUN), RunCompleted()], "event after terminal"),
     ],
     ids=lambda v: v if isinstance(v, str) else "",
@@ -119,7 +176,7 @@ def test_invalid_sequences_fail_loudly(payloads: list[AnyPayload], reason: str) 
 
 def test_sequence_must_start_at_one() -> None:
     with pytest.raises(InvalidEventSequence, match="expected sequence 1"):
-        fold(build_log(RUN, [RunCreated(model="m", input="x")], start_sequence=2))
+        fold(build_log(RUN, [created()], start_sequence=2))
 
 
 def test_mixed_run_ids_are_rejected() -> None:
@@ -190,20 +247,19 @@ def test_structural_mutations_are_rejected(log: list[EventEnvelope], data: st.Da
         fold(_mutations(log, data))
 
 
+_OP_CARRYING = ModelCallStarted | ModelResponseRecorded | ModelCallFailed | RunFailed
+
+
 @given(valid_logs(min_size=3), st.data())
 def test_operation_and_attempt_mutations_are_rejected(
     log: list[EventEnvelope], data: st.DataObject
 ) -> None:
     # Indices of events after the first ModelCallStarted that carry an operation id.
-    later = [
-        i
-        for i, e in enumerate(log)
-        if i >= 2 and isinstance(e.payload, ModelCallStarted | ModelResponseRecorded | RunFailed)
-    ]
+    later = [i for i, e in enumerate(log) if i >= 2 and isinstance(e.payload, _OP_CARRYING)]
     assume(later)
     i = data.draw(st.sampled_from(later))
     payload = log[i].payload
-    assert isinstance(payload, ModelCallStarted | ModelResponseRecorded | RunFailed)
+    assert isinstance(payload, _OP_CARRYING)
     if data.draw(st.booleans()) or isinstance(payload, RunFailed):
         changed = payload.model_copy(update={"operation_id": "tampered"})
     else:

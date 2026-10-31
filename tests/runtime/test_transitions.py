@@ -12,9 +12,11 @@ E = EventType
 LEGAL: dict[tuple[RunStatus | None, EventType], RunStatus] = {
     (None, E.RUN_CREATED): S.PENDING,
     (S.PENDING, E.MODEL_CALL_STARTED): S.MODEL_CALL_IN_FLIGHT,
-    (S.MODEL_CALL_IN_FLIGHT, E.MODEL_CALL_STARTED): S.MODEL_CALL_IN_FLIGHT,
+    (S.PENDING, E.RUN_FAILED): S.FAILED,
     (S.MODEL_CALL_IN_FLIGHT, E.MODEL_RESPONSE_RECORDED): S.MODEL_RESPONDED,
-    (S.MODEL_CALL_IN_FLIGHT, E.RUN_FAILED): S.FAILED,
+    (S.MODEL_CALL_IN_FLIGHT, E.MODEL_CALL_FAILED): S.ATTEMPT_FAILED,
+    (S.ATTEMPT_FAILED, E.MODEL_CALL_STARTED): S.MODEL_CALL_IN_FLIGHT,
+    (S.ATTEMPT_FAILED, E.RUN_FAILED): S.FAILED,
     (S.MODEL_RESPONDED, E.RUN_COMPLETED): S.COMPLETED,
 }
 
@@ -44,4 +46,4 @@ def test_terminal_states_accept_no_events(status: RunStatus) -> None:
 
 
 def test_every_pair_is_classified() -> None:
-    assert len(LEGAL) + len(ILLEGAL) == len(ALL_PAIRS) == 6 * 5
+    assert len(LEGAL) + len(ILLEGAL) == len(ALL_PAIRS) == 7 * 6

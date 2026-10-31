@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from uuid import UUID
 
 from hollis.runtime.events import EventEnvelope, EventType
-from hollis.runtime.model import ModelProvider, ModelRequest, ModelResponse
+from hollis.runtime.model import ModelProvider, ModelRequest, ModelResponse, ProviderCapabilities
 from hollis.runtime.store import RunStore
 
 
@@ -43,6 +43,10 @@ class CrashAfterGenerate:
 
     def __init__(self, inner: ModelProvider) -> None:
         self._inner = inner
+
+    @property
+    def capabilities(self) -> ProviderCapabilities:
+        return self._inner.capabilities
 
     async def generate(self, request: ModelRequest) -> ModelResponse:
         await self._inner.generate(request)

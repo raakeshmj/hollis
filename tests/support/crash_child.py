@@ -15,6 +15,7 @@ from hollis.adapters.fake_provider import ScriptedModelProvider
 from hollis.adapters.sqlite_store import SqliteRunStore
 from hollis.runtime.events import EventEnvelope, EventType
 from hollis.runtime.model import ModelResponse
+from hollis.runtime.policy import RunBudget
 from hollis.runtime.runner import Runner, RunSpec
 
 CHILD_RESPONSE = ModelResponse(content="generated in the child process")
@@ -39,7 +40,9 @@ class PauseAfterResponse:
 async def main(db_path: str) -> None:
     store = await SqliteRunStore.open(db_path)
     runner = Runner(PauseAfterResponse(store), ScriptedModelProvider([CHILD_RESPONSE]))
-    run = await runner.create(RunSpec(model="fake", input="hello"))
+    run = await runner.create(
+        RunSpec(model="fake", input="hello", budget=RunBudget(max_output_tokens=64))
+    )
     await runner.execute(run.run_id)
     sys.exit("unreachable: child should have been killed")
 
