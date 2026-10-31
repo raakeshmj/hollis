@@ -1,13 +1,14 @@
-"""Opt-in live check against the real Anthropic API.
+"""Opt-in live check against the real Anthropic API, through the gateway.
 
 COSTS REAL MONEY. Runs only when both are set:
     HOLLIS_LIVE_TESTS=1
     ANTHROPIC_API_KEY=<key>
 Optional: HOLLIS_LIVE_MODEL (default claude-opus-5-5).
 
-It makes one Messages API request with effort "low" and at most 256 output tokens: a fraction of
-a cent at current prices. This is the only test that verifies live account access and actual
-provider behaviour; every other adapter test uses a mock transport.
+One Messages API request with effort "low" and at most 256 output tokens: a fraction of a cent at
+current prices. This verifies live account access and actual provider behaviour; every other
+Anthropic test uses a mock transport or a loopback server. For local or self-hosted endpoints, use
+the conformance suite (tests/conformance), which needs no API key.
 
     HOLLIS_LIVE_TESTS=1 uv run pytest tests/live -m live -ra
 """
@@ -16,14 +17,10 @@ import os
 
 import pytest
 
-from hollis.adapters.anthropic_messages import AnthropicMessagesProvider
-from hollis.adapters.config import AnthropicMessagesOptions, BearerAuth, EndpointConfig
-from hollis.adapters.credentials import require_env_secret
 from hollis.adapters.memory_store import InMemoryRunStore
-from hollis.runtime.model import DeploymentDescriptor, Locality
+from hollis.gateway import Catalog, ModelGateway
 from hollis.runtime.policy import RunBudget
-from hollis.runtime.redaction import Redactor
-from hollis.runtime.runner import Runner, RunSpec
+from hollis.runtime.runner import RunSpec
 from hollis.runtime.state import RunStatus
 
 pytestmark = [
@@ -36,22 +33,30 @@ pytestmark = [
 
 
 async def test_single_live_run_completes() -> None:
-    key = require_env_secret("ANTHROPIC_API_KEY")
-    descriptor = DeploymentDescriptor(
-        deployment="live",
-        provider="anthropic",
-        protocol="anthropic-messages",
-        model=os.environ.get("HOLLIS_LIVE_MODEL", "claude-opus-5-5"),
-        endpoint="https://api.anthropic.com",
-        locality=Locality.EXTERNAL,
-        deduplicates_requests=False,
+    catalog = Catalog.from_mapping(
+        {
+            "deployments": [
+                {
+                    "id": "live",
+                    "protocol": "anthropic-messages",
+                    "provider": "anthropic",
+                    "model": os.environ.get("HOLLIS_LIVE_MODEL", "claude-opus-5-5"),
+                    "locality": "external",
+                    "endpoint": {
+                        "base_url": "https://api.anthropic.com",
+                        "auth": {"type": "bearer", "env": "ANTHROPIC_API_KEY"},
+                    },
+                    "capabilities": {
+                        "text": {"reasoning_effort": ["low", "medium", "high", "xhigh", "max"]}
+                    },
+                    "options": {"effort": "low", "quota_on_429_without_retry_after": True},
+                }
+            ]
+        }
     )
-    endpoint = EndpointConfig(
-        base_url="https://api.anthropic.com", auth=BearerAuth(env="ANTHROPIC_API_KEY")
-    )
-    options = AnthropicMessagesOptions(effort="low", quota_on_429_without_retry_after=True)
-    async with AnthropicMessagesProvider.create(descriptor, endpoint, key, options) as provider:
-        runner = Runner(InMemoryRunStore(), provider, redactor=Redactor([key]))
+    gateway = ModelGateway(catalog)
+    try:
+        runner = gateway.runner(InMemoryRunStore())
         run = await runner.create(
             RunSpec(
                 model="live",
@@ -60,6 +65,8 @@ async def test_single_live_run_completes() -> None:
             )
         )
         final = await runner.execute(run.run_id)
+    finally:
+        await gateway.aclose()
 
     assert final.status is RunStatus.COMPLETED, final.failure
     assert final.response is not None
