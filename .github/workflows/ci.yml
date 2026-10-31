@@ -8,6 +8,9 @@ on:
 permissions:
   contents: read
 
+env:
+  HYPOTHESIS_PROFILE: ci
+
 jobs:
   check:
     runs-on: ubuntu-latest

@@ -8,6 +8,7 @@ dist/
 # Tool caches
 .pytest_cache/
 .ruff_cache/
+.hypothesis/
 .coverage
 
 # Local Claude Code overrides
