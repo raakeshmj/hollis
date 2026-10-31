@@ -16,9 +16,11 @@ import os
 
 import pytest
 
-from hollis.adapters.anthropic_provider import AnthropicProvider, AnthropicSettings
+from hollis.adapters.anthropic_messages import AnthropicMessagesProvider
+from hollis.adapters.config import AnthropicMessagesOptions, BearerAuth, EndpointConfig
 from hollis.adapters.credentials import require_env_secret
 from hollis.adapters.memory_store import InMemoryRunStore
+from hollis.runtime.model import DeploymentDescriptor, Locality
 from hollis.runtime.policy import RunBudget
 from hollis.runtime.redaction import Redactor
 from hollis.runtime.runner import Runner, RunSpec
@@ -35,11 +37,24 @@ pytestmark = [
 
 async def test_single_live_run_completes() -> None:
     key = require_env_secret("ANTHROPIC_API_KEY")
-    async with AnthropicProvider.from_api_key(key, AnthropicSettings(effort="low")) as provider:
+    descriptor = DeploymentDescriptor(
+        deployment="live",
+        provider="anthropic",
+        protocol="anthropic-messages",
+        model=os.environ.get("HOLLIS_LIVE_MODEL", "claude-opus-5-5"),
+        endpoint="https://api.anthropic.com",
+        locality=Locality.EXTERNAL,
+        deduplicates_requests=False,
+    )
+    endpoint = EndpointConfig(
+        base_url="https://api.anthropic.com", auth=BearerAuth(env="ANTHROPIC_API_KEY")
+    )
+    options = AnthropicMessagesOptions(effort="low", quota_on_429_without_retry_after=True)
+    async with AnthropicMessagesProvider.create(descriptor, endpoint, key, options) as provider:
         runner = Runner(InMemoryRunStore(), provider, redactor=Redactor([key]))
         run = await runner.create(
             RunSpec(
-                model=os.environ.get("HOLLIS_LIVE_MODEL", "claude-opus-5-5"),
+                model="live",
                 input="Reply with the single word: pong",
                 budget=RunBudget(max_output_tokens=256, max_attempts=1, attempt_timeout_s=60),
             )

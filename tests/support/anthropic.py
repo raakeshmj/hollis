@@ -12,10 +12,23 @@ from typing import Any
 import httpx2
 from pydantic import SecretStr
 
-from hollis.adapters.anthropic_provider import AnthropicProvider, AnthropicSettings
+from hollis.adapters.anthropic_messages import AnthropicMessagesProvider
+from hollis.adapters.config import AnthropicMessagesOptions, AuthConfig, BearerAuth, EndpointConfig
+from hollis.runtime.model import DeploymentDescriptor, Locality
 
 FIXTURES = Path(__file__).parents[1] / "adapters" / "fixtures" / "anthropic"
 TEST_KEY = "sk-ant-api03-TESTKEYvalue-not-real-0123456789abcdef"
+TEST_SECRET = SecretStr(TEST_KEY)
+BASE_URL = "https://api.anthropic.com"
+DESCRIPTOR = DeploymentDescriptor(
+    deployment="claude",
+    provider="anthropic",
+    protocol="anthropic-messages",
+    model="claude-opus-5-5",
+    endpoint=BASE_URL,
+    locality=Locality.EXTERNAL,
+    deduplicates_requests=False,
+)
 
 type Reply = httpx2.Response | Exception | Callable[[httpx2.Request], httpx2.Response]
 
@@ -79,7 +92,20 @@ class MockAnthropic:
     def http_client(self) -> httpx2.AsyncClient:
         return httpx2.AsyncClient(transport=httpx2.MockTransport(self._handle))
 
-    def provider(self, settings: AnthropicSettings | None = None) -> AnthropicProvider:
-        return AnthropicProvider.from_api_key(
-            SecretStr(TEST_KEY), settings, http_client=self.http_client()
+    def provider(
+        self,
+        options: AnthropicMessagesOptions | None = None,
+        *,
+        base_url: str = BASE_URL,
+        auth: AuthConfig | None = None,
+        credential: SecretStr | None = TEST_SECRET,
+        headers: dict[str, str] | None = None,
+    ) -> AnthropicMessagesProvider:
+        endpoint = EndpointConfig(
+            base_url=base_url,
+            auth=auth or BearerAuth(env="ANTHROPIC_API_KEY"),
+            headers=headers or {},
+        )
+        return AnthropicMessagesProvider.create(
+            DESCRIPTOR, endpoint, credential, options, http_client=self.http_client()
         )

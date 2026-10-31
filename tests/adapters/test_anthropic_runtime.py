@@ -17,7 +17,7 @@ from tests.support.anthropic import TEST_KEY, MockAnthropic, api_error, ok
 from tests.support.events import T0
 
 SPEC = RunSpec(
-    model="claude-opus-5-5",
+    model="claude",
     input="Say hello.",
     budget=RunBudget(max_output_tokens=512, max_attempts=3, attempt_timeout_s=60),
 )

@@ -15,7 +15,7 @@ from hollis.runtime.store import RunStore
 from tests.support.anthropic import MockAnthropic, ok
 from tests.support.crash import CrashAfterGenerate, CrashingStore, SimulatedCrash
 
-SPEC = RunSpec(model="claude-opus-5-5", input="hi", budget=RunBudget(max_output_tokens=64))
+SPEC = RunSpec(model="claude", input="hi", budget=RunBudget(max_output_tokens=64))
 
 
 async def _no_sleep(_: float) -> None:

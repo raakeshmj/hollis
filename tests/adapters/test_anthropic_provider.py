@@ -10,15 +10,13 @@ from collections.abc import Callable
 import httpx2
 import pytest
 from anthropic import AsyncAnthropic
-from pydantic import SecretStr
 
-from hollis.adapters.anthropic_provider import (
-    DEFAULT_DESCRIPTOR,
+from hollis.adapters._http import parse_retry_after
+from hollis.adapters.anthropic_messages import (
     MAX_NONSTREAMING_OUTPUT_TOKENS,
-    AnthropicProvider,
-    AnthropicSettings,
-    parse_retry_after,
+    AnthropicMessagesProvider,
 )
+from hollis.adapters.config import AnthropicMessagesOptions, HeaderAuth, NoAuth
 from hollis.adapters.credentials import MissingCredential, require_env_secret
 from hollis.runtime.model import (
     CallOutcome,
@@ -28,7 +26,7 @@ from hollis.runtime.model import (
     ModelRequest,
     StopReason,
 )
-from tests.support.anthropic import TEST_KEY, MockAnthropic, api_error, fixture, ok
+from tests.support.anthropic import DESCRIPTOR, TEST_KEY, MockAnthropic, api_error, fixture, ok
 
 MODEL = "claude-opus-5-5"
 
@@ -55,14 +53,13 @@ async def _fail(mock: MockAnthropic, request: ModelRequest | None = None) -> Mod
 
 def test_declares_no_provider_side_deduplication() -> None:
     provider: ModelProvider = MockAnthropic().provider()  # checked by pyright
-    assert provider.descriptor == DEFAULT_DESCRIPTOR
+    assert provider.descriptor == DESCRIPTOR
     assert not provider.descriptor.deduplicates_requests
 
 
-def test_missing_api_key_raises_a_clear_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+def test_missing_api_key_raises_a_clear_error() -> None:
     with pytest.raises(MissingCredential, match="ANTHROPIC_API_KEY"):
-        AnthropicProvider.from_env()
+        require_env_secret("ANTHROPIC_API_KEY", {})
 
 
 @pytest.mark.parametrize("value", ["", "   "])
@@ -100,7 +97,7 @@ async def test_request_is_a_minimal_messages_call() -> None:
 
 async def test_instructions_become_the_system_prompt_and_effort_is_opt_in() -> None:
     mock = MockAnthropic(ok())
-    await mock.provider(AnthropicSettings(effort="low")).generate(
+    await mock.provider(AnthropicMessagesOptions(effort="low")).generate(
         _request(instructions="Be terse.")
     )
     body = mock.body()
@@ -195,7 +192,7 @@ async def test_stop_reason_mapping(api_value: str | None, expected: StopReason) 
         (413, "request_too_large", {}, FailureKind.INVALID_REQUEST),
         (422, "invalid_request_error", {}, FailureKind.INVALID_REQUEST),
         (429, "rate_limit_error", {"retry-after": "12"}, FailureKind.RATE_LIMITED),
-        (429, "rate_limit_error", {}, FailureKind.QUOTA_EXHAUSTED),
+        (429, "rate_limit_error", {}, FailureKind.RATE_LIMITED),  # quota rule is opt-in
         (500, "api_error", {}, FailureKind.SERVER_ERROR),
         (503, "api_error", {}, FailureKind.UNAVAILABLE),
         (504, "timeout_error", {}, FailureKind.SERVER_ERROR),
@@ -274,9 +271,14 @@ async def test_provider_error_message_is_truncated_and_excludes_the_api_key() ->
 
 async def test_injected_client_retries_are_disabled_per_call() -> None:
     mock = MockAnthropic(api_error(529, "overloaded_error"))
-    client = AsyncAnthropic(api_key=TEST_KEY, max_retries=5, http_client=mock.http_client())
+    client = AsyncAnthropic(
+        api_key=TEST_KEY,
+        base_url="https://api.anthropic.com",
+        max_retries=5,
+        http_client=mock.http_client(),
+    )
     with pytest.raises(ModelCallError):
-        await AnthropicProvider(client).generate(_request())
+        await AnthropicMessagesProvider(DESCRIPTOR, client).generate(_request())
     assert mock.calls == 1
 
 
@@ -292,5 +294,76 @@ async def test_provider_closes_its_client() -> None:
 
 
 def test_secret_api_key_is_not_exposed_by_the_provider() -> None:
-    provider = AnthropicProvider.from_api_key(SecretStr(TEST_KEY))
+    provider = MockAnthropic().provider()
     assert TEST_KEY not in repr(provider)
+
+
+# --- explicit endpoints, auth modes and hostile environments --------------------------------
+
+
+async def test_keyless_endpoint_sends_no_credential() -> None:
+    mock = MockAnthropic(ok())
+    provider = mock.provider(base_url="http://127.0.0.1:11434", auth=NoAuth(), credential=None)
+    await provider.generate(_request())
+    sent = mock.requests[0]
+    assert "authorization" not in sent.headers
+    assert "x-api-key" not in sent.headers
+    assert str(sent.url) == "http://127.0.0.1:11434/v1/messages"
+
+
+async def test_header_auth_sends_the_secret_only_in_the_named_header() -> None:
+    mock = MockAnthropic(ok())
+    provider = mock.provider(auth=HeaderAuth(header="x-api-key", env="K"))
+    await provider.generate(_request())
+    sent = mock.requests[0]
+    assert sent.headers["x-api-key"] == TEST_KEY
+    assert "authorization" not in sent.headers
+
+
+async def test_version_override_and_extra_headers_are_sent() -> None:
+    mock = MockAnthropic(ok())
+    provider = mock.provider(
+        AnthropicMessagesOptions(anthropic_version="2023-06-01"), headers={"x-team": "research"}
+    )
+    await provider.generate(_request())
+    assert mock.requests[0].headers["anthropic-version"] == "2023-06-01"
+    assert mock.requests[0].headers["x-team"] == "research"
+
+
+async def test_sdk_environment_variables_cannot_redirect_or_inject(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "http://attacker.invalid")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-api03-HOSTILE-environment-key-000000")
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "hostile-auth-token-value-0000")
+    monkeypatch.setenv("ANTHROPIC_CUSTOM_HEADERS", "X-Leak: 1\nX-Other: 2")
+    mock = MockAnthropic(ok(), ok())
+
+    await mock.provider().generate(_request())
+    keyless = mock.provider(base_url="http://127.0.0.1:8000", auth=NoAuth(), credential=None)
+    await keyless.generate(_request())
+
+    configured, local = mock.requests
+    assert configured.url.host == "api.anthropic.com"
+    assert configured.headers["authorization"] == f"Bearer {TEST_KEY}"
+    assert local.url.host == "127.0.0.1"
+    assert "authorization" not in local.headers
+    for sent in (configured, local):
+        assert "x-leak" not in sent.headers
+        assert "x-other" not in sent.headers
+
+
+async def test_quota_classification_is_opt_in_per_endpoint() -> None:
+    compat = await _fail(MockAnthropic(api_error(429, "rate_limit_error")))
+    assert compat.kind is FailureKind.RATE_LIMITED
+    first_party = MockAnthropic(api_error(429, "rate_limit_error"))
+    with pytest.raises(ModelCallError) as exc_info:
+        await first_party.provider(
+            AnthropicMessagesOptions(quota_on_429_without_retry_after=True)
+        ).generate(_request())
+    assert exc_info.value.kind is FailureKind.QUOTA_EXHAUSTED
+
+
+async def test_response_id_is_captured() -> None:
+    response = await MockAnthropic(ok()).provider().generate(_request())
+    assert response.provider_response_id == "msg_01XFDUDYJgAACzvnptvVoYEL"
