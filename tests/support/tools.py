@@ -85,7 +85,7 @@ class Catalog:
         return self.tools.get(name)
 
 
-def call(name: str, call_id: str = "call_1", **arguments: JsonValue) -> ToolCall:
+def call(name: str, call_id: str = "call_1", /, **arguments: JsonValue) -> ToolCall:
     return ToolCall(call_id=call_id, name=name, arguments=dict(arguments))
 
 
