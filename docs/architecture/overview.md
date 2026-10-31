@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Status: direction-setting. Implemented so far (M1–M2): the runtime core (`hollis.runtime`: events, state fold, RunStore and ModelProvider ports, failure taxonomy, budgets, redaction, single-turn runner) and adapters (`hollis.adapters`: in-memory and SQLite stores, scripted fake provider, credential loader, Anthropic provider). Each section separates **decided** from **open**. Decided items link to ADRs, and open items name the milestone that resolves them.
+Status: direction-setting. Implemented so far (M1–M2): the runtime core (`hollis.runtime`: events, state fold, RunStore and ModelProvider ports, failure taxonomy, budgets, redaction, single-turn runner) the model gateway (`hollis.gateway`: catalog, routing policy, resolution), and adapters (`hollis.adapters`: in-memory and SQLite stores, scripted fake provider, credential loader, endpoint config, Anthropic Messages and OpenAI-compatible Chat Completions protocol adapters). Each section separates **decided** from **open**. Decided items link to ADRs, and open items name the milestone that resolves them.
 
 ## Shape
 
@@ -14,10 +14,13 @@ Hollis is a **modular monolith**: one Python package (`hollis`) with internal mo
                               runtime core
      (run state machine · event log · runner · budgets · policy)
                      |                |                 |
-              ModelProvider       RunStore          ToolExecutor      <- ports (in core)
-                 port               port               port
+       ModelResolver/ModelProvider  RunStore        ToolExecutor      <- ports (in core)
                      |                |                 |
-             provider adapters   storage adapters   sandbox adapters  <- adapters (edge)
+               model gateway          |                 |             <- hollis.gateway
+   (catalog · routing policy · credentials)             |
+                     |                |                 |
+     protocol adapters (anthropic-    storage adapters  sandbox adapters  <- adapters (edge)
+     messages, openai-chat-completions)
 ```
 
 Packages appear only when there is code to put in them. Nothing gets created to reserve a name.
@@ -28,7 +31,8 @@ Packages appear only when there is code to put in them. Nothing gets created to 
 |---|---|---|
 | **Runtime core** | Owns a run's lifecycle: state machine, runner, resume; later budgets and cancellation. The only writer of run events. | M1 (single turn) |
 | **Event log / run record** | Append-only, ordered record of everything that happened in a run. The source of truth for inspection, resume and evaluation. | M1 |
-| **Model provider port** | Provider-neutral request and response types (messages, tool calls, usage). Adapters translate to vendor APIs. | M1 (fake), M2 |
+| **Model provider port** | Provider-neutral request and response types per task family (text generation in M2), plus deployment descriptors and capabilities. | M1 (fake), M2 |
+| **Model gateway** | Resolves logical model ids to deployments and protocol adapters; routing policy; credential resolution. No fallback or load balancing ([ADR-0011](../decisions/0011-model-gateway-and-deployments.md)). | M2 |
 | **Storage port** | Persists run records and, later, memory. Adapters: in-memory, SQLite, later others. | M1 |
 | **Tool system** | Typed tool schemas, argument validation, permission policy, sandboxed execution, result capture. | M3 |
 | **Context manager** | Decides what goes into each model call within a token budget. | M4 |
@@ -45,7 +49,7 @@ Packages appear only when there is code to put in them. Nothing gets created to 
 - **No `interrupted` status.** A crashed run is simply a non-terminal run with no active runner.
 - **No `cancelled` status** until cancellation exists.
 - **One code path.** `Runner.execute` performs both first execution and recovery.
-- **Model-call semantics** ([ADR-0006](../decisions/0006-model-call-execution-semantics.md), amended by [ADR-0007](../decisions/0007-failure-classification-retries-and-ambiguous-policy.md)). Hollis owns retries, and failures are classified as not processed or ambiguous. The ambiguous policy defaults to `fail` unless the provider deduplicates. Budgets: attempts, output tokens, attempt timeout, deadline.
+- **Model-call semantics** ([ADR-0006](../decisions/0006-model-call-execution-semantics.md), amended by [ADR-0007](../decisions/0007-failure-classification-retries-and-ambiguous-policy.md)). Hollis owns retries, and failures are classified as not processed or ambiguous. The ambiguous policy defaults to `fail` unless the deployment deduplicates. Budgets: attempts, output tokens, attempt timeout, deadline.
   - A stable operation id per logical call.
   - An intent is recorded before each attempt.
   - The provider is never reinvoked after a response is recorded.
@@ -59,12 +63,18 @@ Packages appear only when there is code to put in them. Nothing gets created to 
 
 ## Model providers
 
-**Decided.** The core defines its own message, tool-call and usage types. No vendor SDK is imported outside an adapter (NFR-7, enforced by tests from M1). A deterministic scripted fake provider is a first-class adapter for testing (NFR-3).
+**Decided.**
+- The core defines its own request, response and usage types. No vendor SDK is imported outside an adapter (NFR-7). A scripted fake provider is a first-class adapter for tests (NFR-3).
+- **Deployments separate identity, provider, protocol, endpoint and capabilities** ([ADR-0011](../decisions/0011-model-gateway-and-deployments.md)). The protocol selects the adapter; the provider label never does.
+- **Protocol adapters** ([ADR-0012](../decisions/0012-protocol-adapters.md)): `anthropic-messages` (official SDK) and `openai-chat-completions` (raw `httpx2`). Each serves many servers, configured by data. No multi-provider library.
+- **Capabilities are declared per deployment** and validated before persistence. Provider-specific options are typed per protocol, so nothing is silently dropped.
+- **On-prem networking** ([ADR-0013](../decisions/0013-locality-routing-and-on-prem.md)): explicit endpoints, locality and routing policy, custom CA and mutual TLS, explicit proxies, no environment-driven routing, no SDK telemetry.
+- Compatibility status per server: [model-compatibility.md](model-compatibility.md). Nothing has been verified live yet.
 
 **Open.**
-- Streaming interface shape. Needed for responses above the non-streaming bound (ADR-0008).
-- Typed per-run provider options (M2 configures effort per provider instance), to be decided when a second provider shows what's common.
-- Normalizing provider-specific features (structured output, caching, reasoning) without lowest-common-denominator loss.
+- Streaming, needed for responses above the non-streaming bound.
+- Native adapters (OpenAI Responses API, Gemini, Bedrock, …) and further task families (embeddings, rerank, image, audio), each behind its own port.
+- Typed per-run provider options. Options are currently per deployment.
 
 ## Context and memory
 
@@ -129,7 +139,10 @@ See [testing.md](testing.md).
 | Anthropic adapter (optional extra, no SDK retries, no idempotency) | Accepted (M2) | ADR-0008 |
 | Credential boundary and redaction | Accepted (M2) | ADR-0009 |
 | Retention and deletion: whole-run, operator-configured | Policy accepted, mechanism open | ADR-0010 |
-| Streaming, per-run provider options, cost accounting | Open | — |
+| Model gateway and deployment model | Accepted (M2) | ADR-0011 |
+| Own protocol adapters; no multi-provider library | Accepted (M2) | ADR-0012 |
+| Locality, routing policy, on-prem networking | Accepted (M2) | ADR-0013 |
+| Streaming, native non-Anthropic adapters, more task families, cost accounting | Open | — |
 | Sandbox technology, tool idempotency | Open | M3 |
 | Retrieval backend | Open, chosen by benchmark | M4 |
 | Cloud deployment target | Open | Undecided |

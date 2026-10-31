@@ -1,6 +1,6 @@
 # ADR-0007: Failure classification, Hollis-owned retries, ambiguous-outcome policy and budgets
 
-- Status: Accepted (M2). Amends ADR-0006.
+- Status: Accepted (M2). Amends ADR-0006. Amended by the gateway revision (below).
 - Date: 2026-10-31
 
 ## Context
@@ -31,7 +31,7 @@ Real providers also fail transiently (rate limits, overload). SDKs retry those i
 
 **Ambiguous-outcome policy.**
 - `AmbiguousOutcomePolicy` is `fail` or `retry`, recorded in `RunCreated`.
-- The default comes from `ProviderCapabilities.deduplicates_requests`: `retry` if the provider deduplicates, otherwise **`fail`**.
+- The default comes from the deployment's `deduplicates_requests` (ADR-0011): `retry` if the endpoint deduplicates, otherwise **`fail`**. Every endpoint defaults to `false`; none of the documented servers offers request idempotency.
 - `retry` can be chosen explicitly, accepting the risk of a second charge.
 
 **Budgets.**
@@ -69,6 +69,13 @@ Real providers also fail transiently (rate limits, overload). SDKs retry those i
 - The conservative classification of 500/504 as ambiguous fails some runs that a retry would have rescued. That's a cost of not double-charging by default.
 - `429` without `retry-after` is classified as quota exhaustion and is non-retryable. This follows the API docs' description of spend caps; if Anthropic changes that, the classification must follow.
 - An extra event per failed attempt makes logs longer, but each one makes the run's history explicit.
+
+## Gateway revision (M2)
+
+- New kind `invalid_response` (ambiguous): a 2xx response that can't be interpreted may still have been generated and billed.
+- **429 classification is per endpoint.** "429 without retry-after means quota exhausted" is Anthropic's documented convention, now an endpoint option (`quota_on_429_without_retry_after`). For OpenAI-style endpoints, quota exhaustion is recognised by `error.code == "insufficient_quota"`. Otherwise a 429 is a retryable rate limit.
+- 408 and 503 are not processed and retryable. 503 covers servers that are still loading a model, such as llama.cpp.
+- Status and transport classification are shared by all protocol adapters (`hollis.adapters._http`).
 
 ## Consequences
 

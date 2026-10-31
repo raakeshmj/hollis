@@ -34,7 +34,11 @@ Each property maps to a requirement and gets a test when its component exists. �
 | Core modules import no adapter or vendor SDK | NFR-7 | ✅ M1 `tests/architecture/` |
 | Budgets stop a run cleanly when exceeded | NFR-6 | ✅ M2 (attempts, deadline, timeout) |
 | Ambiguous outcomes are never retried under the `fail` policy; a recorded response never triggers another request | FR-4 | ✅ M2 (fake and Anthropic mock) |
-| Provider failures are classified from typed errors, never message text | ADR-0007 | ✅ M2 `tests/adapters/test_anthropic_provider.py` |
+| Provider failures are classified from typed errors, status codes and transport types, never message text | ADR-0007 | ✅ M2 `tests/adapters/` |
+| SDK environment variables cannot redirect requests, swap credentials or inject headers | NFR-11 | ✅ M2 (hostile-environment tests) |
+| Routing policy refuses disallowed localities before persistence; requests reach only the resolved endpoint | NFR-11 | ✅ M2 `tests/gateway/` |
+| Custom-CA TLS works, and fails without the CA, over a real socket | ADR-0013 | ✅ M2 `tests/network/` |
+| Protocol conformance (offline loopback; live opt-in) | ADR-0012 | ✅ offline; live: none recorded ([matrix](model-compatibility.md)) |
 | Registered secrets never appear in persisted events, the database file or logs | NFR-4 | ✅ M2 (planted-key tests). Arbitrary secrets in user text are not detected ([gap](../product/requirements.md#data-persistence-and-secret-handling)) |
 | Tool arguments failing schema validation never execute | NFR-4, FR-6 | M3 |
 | Policy-denied tool calls never execute and are recorded as denied | FR-7 | M3 |

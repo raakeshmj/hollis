@@ -1,6 +1,6 @@
 # M2 Plan: Real Model Integration (Anthropic)
 
-Status: approved 2026-10-31.
+Status: approved 2026-10-31. **Provider scope superseded** by [m2-gateway.md](m2-gateway.md); the failure taxonomy, retries, policy, budgets and redaction decisions here remain in force.
 
 ## Context
 M1 (branch `m1-runtime-core`, head `4da99a7`, clean) delivered a deterministic single-turn runtime. It assumes a provider that either succeeds, raises `ModelProviderError` (definitive), or raises anything else (ambiguous, blindly retried on resume with the same operation id). That blind retry was only safe because the scripted fake deduplicates.

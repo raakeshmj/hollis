@@ -1,0 +1,45 @@
+# Example Hollis model catalog. Credentials appear only as environment-variable names.
+# Load with: hollis.gateway.Catalog.from_toml("hollis.toml")
+
+# Confine runs to operator infrastructure (remove "external" to forbid cloud APIs).
+[routing]
+allowed_localities = ["local", "private", "external"]
+
+# Local inference server on this machine (Ollama shown; vLLM, llama.cpp, LM Studio, SGLang similar).
+[[deployments]]
+id = "local-qwen"
+protocol = "openai-chat-completions"
+provider = "ollama"            # selects conservative presets; see docs/architecture/model-compatibility.md
+model = "qwen3:8b"             # identifier sent on the wire
+locality = "local"             # must be a loopback endpoint
+[deployments.endpoint]
+base_url = "http://127.0.0.1:11434/v1"
+
+# Enterprise inference gateway with a private CA.
+[[deployments]]
+id = "corp-llama"
+protocol = "openai-chat-completions"
+provider = "vllm"
+model = "meta-llama/Llama-3.3-70B-Instruct"
+locality = "private"
+[deployments.endpoint]
+base_url = "https://inference.corp.example/v1"
+auth = { type = "bearer", env = "CORP_INFERENCE_TOKEN" }
+tls = { ca_bundle = "/etc/ssl/certs/corp-ca.pem" }
+[deployments.capabilities.text]
+max_output_tokens = 8192
+
+# Anthropic's API.
+[[deployments]]
+id = "claude"
+protocol = "anthropic-messages"
+provider = "anthropic"
+model = "claude-opus-5-5"
+locality = "external"
+[deployments.endpoint]
+base_url = "https://api.anthropic.com"
+auth = { type = "bearer", env = "ANTHROPIC_API_KEY" }
+[deployments.capabilities.text]
+reasoning_effort = ["low", "medium", "high", "xhigh", "max"]
+[deployments.options]
+effort = "medium"

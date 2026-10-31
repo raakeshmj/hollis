@@ -45,3 +45,12 @@ Hollis must run models across providers, API protocols and deployment environmen
 - Credentials never appear in events, SQLite bytes, logs or descriptors.
 - Recovery guarantees hold through the gateway, and a changed deployment is refused on resume.
 - The compatibility matrix distinguishes documented from verified; no claims without a live conformance run.
+
+## Implementation notes
+
+- **Commit order changed** to endpoint config and HTTP layer, then adapters, then gateway. The gateway composes the adapters, so they came first.
+- **Capability validation lives in the runtime** (`require_text_generation`), not the gateway, so it applies to any resolver, including `SingleProvider`.
+- **Anthropic SDK header handling:** `default_headers` is typed `str`-only. The adapter therefore strips `Authorization` (keyless and header auth) and `ANTHROPIC_CUSTOM_HEADERS` names with the SDK's public `Omit` in per-request `extra_headers`. A credential is always passed explicitly (a placeholder when none is needed), so the SDK's environment and profile credential discovery never runs.
+- **Behaviour change in the Anthropic adapter:** "429 without retry-after means quota exhausted" is now opt-in per endpoint (`quota_on_429_without_retry_after`). The `anthropic` preset enables it.
+- **Presets** apply when a deployment omits `options` or `capabilities`. A deployment validated directly, outside a catalog, uses its class's protocol for preset lookup.
+- **Verification:** the full suite passed with non-loopback outbound traffic denied by a sandbox profile and hostile `ANTHROPIC_*`, `OPENAI_*` and `HTTPS_PROXY` values set. No live endpoint was tested.

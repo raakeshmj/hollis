@@ -1,6 +1,6 @@
 # ADR-0008: Anthropic adapter
 
-- Status: Accepted (M2)
+- Status: Accepted (M2); revised by [ADR-0012](0012-protocol-adapters.md). The adapter is now the `anthropic-messages` protocol adapter (`hollis.adapters.anthropic_messages.AnthropicMessagesProvider`), configured from an explicit `EndpointConfig` by the gateway. The details below are kept as the record of the original decision.
 - Date: 2026-10-31
 
 ## Context

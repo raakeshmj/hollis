@@ -10,7 +10,8 @@ IDs are stable. Cite them from ADRs, plans and tests (for example, "covers NFR-2
 | FR-2 | Execute a run to completion, failure or cancellation, with an explicit state at every point | M1 (completion, failure); cancellation later |
 | FR-3 | Persist every run as an ordered record of events (model calls, tool calls, results, state transitions) | M1 |
 | FR-4 | Resume an interrupted run from its persisted record. Never re-invoke a side effect whose result is durably recorded. Retry unrecorded outcomes under the same operation id, with no exactly-once claim ([ADR-0006](../decisions/0006-model-call-execution-semantics.md)). | M1 |
-| FR-5 | Call models through a provider-neutral interface, so swapping providers needs no agent code changes | M1 (fake), M2 (Anthropic) |
+| FR-5 | Call models through a provider-neutral interface, so swapping providers needs no agent code changes | M1 (fake), M2 (gateway: Anthropic Messages and OpenAI-compatible protocols) |
+| FR-14 | Configure model deployments independently of providers: protocol, endpoint (cloud, private, enterprise, localhost, on-prem), wire model id, auth by reference, TLS and proxy, declared capabilities | M2 ([ADR-0011](../decisions/0011-model-gateway-and-deployments.md)) |
 | FR-6 | Define tools with typed, validated inputs and outputs | M3 |
 | FR-7 | Execute tools under an explicit permission and sandbox policy | M3 |
 | FR-8 | Manage context: select, truncate and summarize what is sent to the model within a budget | M4 |
@@ -34,6 +35,7 @@ IDs are stable. Cite them from ADRs, plans and tests (for example, "covers NFR-2
 | NFR-8 **Local-first** | The full feature set works on one machine with no external services other than the chosen model provider. |
 | NFR-9 **Observability** | Every run can be inspected after the fact: what was sent, what came back, what ran, how long it took and what it cost. |
 | NFR-10 **Typed API** | The public Python API is fully typed and passes pyright strict. |
+| NFR-11 **Controlled egress** | Run data goes only to the resolved deployment's configured endpoint. No silent fallback, no environment-driven routing, no telemetry to third parties, and a routing policy can confine runs to local/private deployments ([ADR-0013](../decisions/0013-locality-routing-and-on-prem.md)). **M2:** implemented and tested offline. |
 
 ## Data persistence and secret handling
 
@@ -41,7 +43,7 @@ This section is the canonical statement of what Hollis persists and what it guar
 
 **What is persisted** (event payloads, in memory or in SQLite):
 - Run `input` and `instructions`, **verbatim**. They are never rewritten, because recovery must resend the identical request.
-- Model name, provider name, budget and ambiguous-outcome policy.
+- Logical model id, the deployment reference (provider label, protocol, wire model, endpoint origin, locality, idempotency), budget and ambiguous-outcome policy. Credentials are never included.
 - Model response content (registered secret values removed), stop reason, usage, served model, provider request id.
 - Per-attempt failures (`ModelCallFailed`) and run failures (`RunFailed`): kind, provider request id, and a sanitized, redacted message.
 
@@ -49,7 +51,7 @@ This section is the canonical statement of what Hollis persists and what it guar
 
 | # | Requirement | Status |
 |---|---|---|
-| 1 | Credential references: raw credentials never in run configuration, `ModelRequest` or events | **Met (M2).** Keys load through `hollis.adapters.credentials` as `SecretStr` and go only to the provider client; runs record the provider name ([ADR-0009](../decisions/0009-credentials-and-redaction.md)). |
+| 1 | Credential references: raw credentials never in run configuration, `ModelRequest` or events | **Met (M2).** Keys load through `hollis.adapters.credentials` as `SecretStr` and go only to the provider client. Deployments hold env-var references, resolved by the gateway; runs record the deployment reference ([ADR-0009](../decisions/0009-credentials-and-redaction.md)). |
 | 2 | Redaction before persistence and logging | **Met for diagnostics and registered values.** Failure messages and runtime logs: registered values plus credential patterns. Response content: registered values. Run input is not redacted; input containing a registered secret is refused. |
 | 3 | Sanitized provider errors | **Met (M2).** The Anthropic adapter builds messages from status, error type and a truncated API message, with no bodies or headers; the runtime redacts them ([ADR-0008](../decisions/0008-anthropic-adapter.md)). |
 | 4 | Tests proving secrets don't reach events or logs | **Met (M2)** for registered secrets: planted-key tests check serialized events, SQLite file bytes and captured logs. |

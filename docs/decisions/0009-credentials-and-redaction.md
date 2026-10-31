@@ -1,6 +1,6 @@
 # ADR-0009: Credential boundary and redaction
 
-- Status: Accepted (M2)
+- Status: Accepted (M2). Gateway revision: deployments reference credentials by environment-variable name only (`auth = {type = "bearer", env = "…"}`). `ModelGateway` resolves them when a deployment is first used and registers each value with the shared `Redactor` before any request is sent, so registration is no longer manual. Credentials never appear in deployment descriptors or run events.
 - Date: 2026-10-31
 
 ## Context

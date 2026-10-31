@@ -6,17 +6,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Hollis is a model-agnostic, local-first platform for building, running and orchestrating autonomous agents (Python SDK first, with a CLI and REST API later). The **runtime and harness** are the foundation. Coding agents are one specialization, so don't let the core assume coding tasks.
 
-**Current milestone: M2 (Anthropic provider) is implemented and verified offline; a live run and behavioral evals are pending API access. M3 (tools and sandboxing) is not yet planned.** Don't implement work from later milestones. See [docs/product/roadmap.md](docs/product/roadmap.md).
+**Current milestone: M2 (universal model gateway) is implemented and verified offline; no live endpoint has been tested. M3 (tools and sandboxing) is not yet planned.** Don't implement work from later milestones. See [docs/product/roadmap.md](docs/product/roadmap.md).
 
 ## Repository map
 
 - `src/hollis/runtime/`: the core. Events and schema registry, state fold, RunStore and ModelProvider ports, failure taxonomy, budgets and policy, `Redactor`, `Runner`. It imports only stdlib, pydantic and itself (enforced by `tests/architecture/`).
-- `src/hollis/adapters/`: in-memory and SQLite stores, scripted fake provider, credential loader, Anthropic provider. The Anthropic SDK is an optional extra, imported only by `anthropic_provider.py` (enforced by a subprocess test).
-- `tests/`: `runtime/`, `adapters/` (store contract; Anthropic over `httpx2.MockTransport`), `recovery/` (crash injection), `architecture/`, `live/` (opt-in, costs money). Shared helpers live in `tests/support/`.
+- `src/hollis/gateway/`: deployment catalog (Python or TOML), presets, routing policy, `ModelGateway` (implements the runtime's `ModelResolver`).
+- `src/hollis/adapters/`: stores, fake provider, credentials, endpoint config (`config.py`, SDK-free), shared HTTP layer (`_http.py`), protocol adapters `anthropic_messages.py` (official SDK) and `openai_chat.py` (raw httpx2). Provider SDKs and httpx2 are optional extras, loaded only by their adapter (enforced by subprocess tests).
+- `tests/`: `runtime/`, `adapters/` (mock transports), `gateway/`, `network/` (real loopback sockets and TLS), `conformance/` (offline, plus opt-in live via `HOLLIS_CONFORMANCE_*`), `recovery/`, `architecture/`, `live/`. Shared helpers live in `tests/support/`.
 - `docs/product/`: vision and non-goals, requirements (FR-x / NFR-x IDs), roadmap.
 - `docs/architecture/`: `overview.md` (components, decided vs open), `testing.md` (test and eval strategy).
 - `docs/decisions/`: ADRs. Use `0000-template.md` for new ones.
-- `docs/plans/`: milestone implementation plans (`m2-anthropic.md` is the most recent).
+- `docs/plans/`: milestone implementation plans (`m2-gateway.md` is the most recent).
 - `docs/research/`: research notes with adopt now / later / no verdicts.
 - `docs/development.md`: workflow, ADR policy, when to add skills, rules, hooks or subagents.
 
@@ -25,7 +26,7 @@ Hollis is a model-agnostic, local-first platform for building, running and orche
 ## Commands
 
 ```bash
-make sync                    # uv sync --locked (dev includes hollis[anthropic])
+make sync                    # uv sync --locked (dev includes all provider extras)
 make check                   # ruff format --check, ruff check, pyright (strict), pytest; CI runs this
 make fix                     # ruff format + ruff check --fix
 uv run pytest tests/test_cli.py::test_version_flag_prints_version_and_exits_zero   # single test
@@ -45,7 +46,13 @@ HOLLIS_LIVE_TESTS=1 ANTHROPIC_API_KEY=... uv run pytest tests/live -m live   # o
   - Validate every new event with `apply` before appending it.
   - Never rewrite stored events. A payload shape change means a version bump plus an upcaster.
   - Model-call semantics follow ADR-0006 as amended by [ADR-0007](docs/decisions/0007-failure-classification-retries-and-ambiguous-policy.md): every attempt gets an intent and a recorded outcome; Hollis owns retries (providers make one request per call); ambiguous outcomes follow the run's policy; no exactly-once claims.
-  - Providers raise `ModelCallError` with a `FailureKind`, classified from typed errors and status codes, never from message text. Provider-specific options stay in the adapter.
+  - Providers raise `ModelCallError` with a `FailureKind`, classified from typed errors, status codes and transport types, never from message text.
+- Model architecture ([ADR-0011](docs/decisions/0011-model-gateway-and-deployments.md)–[0013](docs/decisions/0013-locality-routing-and-on-prem.md)):
+  - Runs reference logical deployments. The protocol selects the adapter; the provider label never does.
+  - New servers that implement a supported protocol need configuration, not code.
+  - Capabilities are declared per deployment and validated before persistence. Never silently drop unsupported parameters.
+  - Never add implicit routing: explicit base URL and auth, no SDK environment fallbacks, no proxy env, no fallback between deployments.
+  - Don't claim compatibility with a server without a recorded live conformance run ([matrix](docs/architecture/model-compatibility.md)).
 - Don't create packages or modules to reserve namespace. Create them when there is code for them.
 - Don't add dependencies without a justification in the commit message. Architecture-shaping dependencies need an ADR.
 
@@ -61,7 +68,7 @@ HOLLIS_LIVE_TESTS=1 ANTHROPIC_API_KEY=... uv run pytest tests/live -m live   # o
 - Modular monolith. No microservices, distributed infrastructure, vector databases or model-training infrastructure.
 - Local-first: everything must work on one machine. Storage sits behind a port. SQLite is the store, assuming a single process and a single active runner ([ADR-0004](docs/decisions/0004-local-first-sqlite-persistence.md)).
 - Treat model output as untrusted input.
-- Credentials load only through `hollis.adapters.credentials` and go only to provider clients. Never put them in run specs, requests, events or logs.
+- Credentials are configured as env-var references, resolved only by the gateway via `hollis.adapters.credentials`, and go only to provider clients. Never put them in run specs, requests, descriptors, events or logs.
 - Run input is persisted verbatim. Failure messages and logs are redacted, and registered secrets are refused in input. Arbitrary secrets in user text are **not** detected; don't claim otherwise ([requirements](docs/product/requirements.md#data-persistence-and-secret-handling), [ADR-0009](docs/decisions/0009-credentials-and-redaction.md)).
 
 ## Workflow
