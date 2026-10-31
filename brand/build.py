@@ -7,8 +7,8 @@ package; IBM Plex is licensed under the SIL Open Font License 1.1, which permits
 in artwork). Outputs go to brand/svg, brand/png and web/public. The script is deterministic.
 
 The mark ("Continuation"): a hollow ring (the open task) joined by a sharp, right-angled path (a
-terminal tree connector) to a solid square of equal visual weight (the recorded result). Geometry lives on a 24-unit grid; a pixel-aligned 16-unit variant is
-used at 16 and 32 px.
+terminal tree connector) to a solid square of equal visual weight (the recorded result).
+Geometry lives on a 24-unit grid; a pixel-aligned 16-unit variant is used at 16 and 32 px.
 """
 
 import io
@@ -56,7 +56,8 @@ def mark_svg(color: str) -> str:
     cx, cy, r = RING
     x, y, size, rx = SQUARE
     return (
-        f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="{color}" stroke-width="{STROKE}"/>'
+        f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="{color}" '
+        f'stroke-width="{STROKE}"/>'
         f'<path d="M{STEM_X} {STEM_TOP}V{BAR_Y}H{BAR_END}" fill="none" stroke="{color}" '
         f'stroke-width="{STROKE}"/>'
         f'<rect x="{x}" y="{y}" width="{size}" height="{size}" rx="{rx}" fill="{color}"/>'
@@ -65,11 +66,12 @@ def mark_svg(color: str) -> str:
 
 def small_mark_svg(color: str) -> str:
     cx, cy, r, stroke = SMALL["ring"]
-    sx0, sy0, sx1, sy1 = SMALL["stem"]
+    sx0, sy0, sx1, _ = SMALL["stem"]  # the bar covers the stem's foot
     bx0, by0, bx1, by1 = SMALL["bar"]
     qx0, qy0, qx1, qy1 = SMALL["square"]
     return (
-        f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="{color}" stroke-width="{stroke}"/>'
+        f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="{color}" '
+        f'stroke-width="{stroke}"/>'
         f'<path d="M{sx0} {sy0}H{sx1}V{by0}H{bx1}V{by1}H{bx0}Z" fill="{color}"/>'
         f'<rect x="{qx0}" y="{qy0}" width="{qx1 - qx0}" height="{qy1 - qy0}" fill="{color}"/>'
     )
@@ -129,7 +131,9 @@ def wordmark_paths(font_path: Path) -> tuple[list[tuple[str, str]], float, float
     return pieces, cursor - TRACKING, float(ascent), float(x_height)
 
 
-def wordmark_body(pieces: list[tuple[str, str]], letters: str, dot: str, dx: float = 0, dy: float = 0) -> str:
+def wordmark_body(
+    pieces: list[tuple[str, str]], letters: str, dot: str, dx: float = 0, dy: float = 0
+) -> str:
     letter_path = " ".join(p for role, p in pieces if role == "letter")
     dot_path = " ".join(p for role, p in pieces if role == "dot")
     transform = f' transform="translate({dx:.2f} {dy:.2f})"' if dx or dy else ""
@@ -163,20 +167,38 @@ def render_icon(size: int, tile: str, mark: str) -> Image.Image:
     if small:
         cx, cy, r, stroke = SMALL["ring"]
         outer, inner = (r + stroke / 2) * unit, (r - stroke / 2) * unit
-        draw.ellipse((cx * unit - outer, cy * unit - outer, cx * unit + outer, cy * unit + outer), fill=color)
-        draw.ellipse((cx * unit - inner, cy * unit - inner, cx * unit + inner, cy * unit + inner), fill=_hex(tile))
+        draw.ellipse(
+            (cx * unit - outer, cy * unit - outer, cx * unit + outer, cy * unit + outer), fill=color
+        )
+        draw.ellipse(
+            (cx * unit - inner, cy * unit - inner, cx * unit + inner, cy * unit + inner),
+            fill=_hex(tile),
+        )
         for x0, y0, x1, y1 in (SMALL["stem"], SMALL["bar"], SMALL["square"]):
             draw.rectangle((x0 * unit, y0 * unit, x1 * unit - 1, y1 * unit - 1), fill=color)
     else:
         cx, cy, r = RING
         outer, inner = (r + STROKE / 2) * unit, (r - STROKE / 2) * unit
-        draw.ellipse((cx * unit - outer, cy * unit - outer, cx * unit + outer, cy * unit + outer), fill=color)
-        draw.ellipse((cx * unit - inner, cy * unit - inner, cx * unit + inner, cy * unit + inner), fill=_hex(tile))
+        draw.ellipse(
+            (cx * unit - outer, cy * unit - outer, cx * unit + outer, cy * unit + outer), fill=color
+        )
+        draw.ellipse(
+            (cx * unit - inner, cy * unit - inner, cx * unit + inner, cy * unit + inner),
+            fill=_hex(tile),
+        )
         half = STROKE / 2 * unit
-        draw.rectangle((STEM_X * unit - half, STEM_TOP * unit, STEM_X * unit + half, BAR_Y * unit + half), fill=color)
-        draw.rectangle((STEM_X * unit - half, BAR_Y * unit - half, BAR_END * unit, BAR_Y * unit + half), fill=color)
+        draw.rectangle(
+            (STEM_X * unit - half, STEM_TOP * unit, STEM_X * unit + half, BAR_Y * unit + half),
+            fill=color,
+        )
+        draw.rectangle(
+            (STEM_X * unit - half, BAR_Y * unit - half, BAR_END * unit, BAR_Y * unit + half),
+            fill=color,
+        )
         x, y, side, rx = SQUARE
-        draw.rounded_rectangle((x * unit, y * unit, (x + side) * unit, (y + side) * unit), radius=rx * unit, fill=color)
+        draw.rounded_rectangle(
+            (x * unit, y * unit, (x + side) * unit, (y + side) * unit), radius=rx * unit, fill=color
+        )
     return image.resize((size, size), Image.Resampling.LANCZOS)
 
 
@@ -195,10 +217,18 @@ def main(font_dir: Path) -> None:
     files["icon-small-dark.svg"] = icon_svg(INK, BRASS_BRIGHT, small=True)
 
     # Marks (no tile).
-    for name, color in (("ink", INK), ("paper", PAPER), ("brass", BRASS), ("black", BLACK), ("white", WHITE)):
+    for name, color in (
+        ("ink", INK),
+        ("paper", PAPER),
+        ("brass", BRASS),
+        ("black", BLACK),
+        ("white", WHITE),
+    ):
         files[f"mark-{name}.svg"] = document("0 0 24 24", mark_svg(color), "Hollis")
     files["mark-current.svg"] = document("0 0 24 24", mark_svg("currentColor"), "Hollis")
-    files["mark-small-current.svg"] = document("0 0 16 16", small_mark_svg("currentColor"), "Hollis")
+    files["mark-small-current.svg"] = document(
+        "0 0 16 16", small_mark_svg("currentColor"), "Hollis"
+    )
 
     # Wordmark and lockups.
     pieces, width, cap, _ = wordmark_paths(font_dir / "ibm-plex-sans-latin-600-normal.woff2")
@@ -214,7 +244,9 @@ def main(font_dir: Path) -> None:
             f"0 -20 {width:.0f} {height:.0f}", wordmark_body(pieces, letters, dot), "Hollis"
         )
     files["wordmark-current.svg"] = document(
-        f"0 -20 {width:.0f} {height:.0f}", wordmark_body(pieces, "currentColor", "currentColor"), "Hollis"
+        f"0 -20 {width:.0f} {height:.0f}",
+        wordmark_body(pieces, "currentColor", "currentColor"),
+        "Hollis",
     )
     # Horizontal lockup: icon height = 1.32 x cap height, gap = 0.36 x icon height.
     icon_size = cap * 1.32
@@ -247,7 +279,10 @@ def main(font_dir: Path) -> None:
         render_icon(size, INK, BRASS_BRIGHT).save(PNG_DIR / f"icon-dark-{size}.png", optimize=True)
     favicon = io.BytesIO()
     render_icon(48, BRASS, INK).save(
-        favicon, format="ICO", sizes=[(16, 16), (32, 32), (48, 48)], append_images=[render_icon(16, BRASS, INK), render_icon(32, BRASS, INK)]
+        favicon,
+        format="ICO",
+        sizes=[(16, 16), (32, 32), (48, 48)],
+        append_images=[render_icon(16, BRASS, INK), render_icon(32, BRASS, INK)],
     )
     (PNG_DIR / "favicon.ico").write_bytes(favicon.getvalue())
 
