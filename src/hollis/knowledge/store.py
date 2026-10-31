@@ -70,7 +70,9 @@ class KnowledgeStore(Protocol):
 
     async def search_lexical(
         self, access: KnowledgeAccess, terms: Sequence[str], *, limit: int
-    ) -> list[tuple[Chunk, float]]: ...
+    ) -> list[tuple[Chunk, float]]:
+        """BM25 matches for any of the (already analyzed) search terms, best first."""
+        ...
 
     async def search_identifiers(
         self, access: KnowledgeAccess, identifiers: Sequence[str], *, limit: int

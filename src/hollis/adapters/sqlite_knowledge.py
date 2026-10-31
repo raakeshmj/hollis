@@ -27,7 +27,7 @@ from hollis.knowledge.model import Chunk, Collection, Section, Source
 from hollis.knowledge.store import ReconcileReport, StoreStats
 from hollis.runtime.embedding import EmbeddingMismatch, EmbeddingSpace
 from hollis.runtime.knowledge import KnowledgeAccess
-from hollis.runtime.text import analyze, identifiers, parts, tokens
+from hollis.runtime.text import identifiers, parts, tokens
 
 MIGRATIONS = (
     (
@@ -339,7 +339,7 @@ class SqliteKnowledgeStore:
         self, access: KnowledgeAccess, terms: Sequence[str], *, limit: int
     ) -> list[tuple[Chunk, float]]:
         visible = _visible(access)
-        words = [t for term in terms for t in analyze(term)]
+        words = [term.casefold() for term in terms if term.strip()]  # already analyzed
         if visible is None or not words:
             return []
         clause, params = visible

@@ -19,6 +19,7 @@ The defaults were chosen by the evaluation in docs/architecture/rag-evaluation.m
 """
 
 import asyncio
+import re
 import time
 from collections import defaultdict
 from collections.abc import Awaitable, Sequence
@@ -31,7 +32,7 @@ from hollis.knowledge.model import Chunk, Source
 from hollis.knowledge.store import KnowledgeStore
 from hollis.runtime.embedding import EmbeddingProvider, InputType, embed_all
 from hollis.runtime.knowledge import KnowledgeAccess, KnowledgeQuery, RetrievedPassage
-from hollis.runtime.text import analyze, identifiers, query_terms
+from hollis.runtime.text import STOPWORDS, analyze, identifiers, query_terms, tokens
 
 
 class RetrievalConfig(BaseModel):
@@ -40,6 +41,8 @@ class RetrievalConfig(BaseModel):
     lexical: bool = True
     dense: bool = True
     exact: bool = True
+    identifier_analysis: bool = True
+    """Split identifiers into parts in lexical queries (False: whole tokens only, as in M4)."""
     fusion: Literal["rrf", "weighted"] = "rrf"
     rrf_k: int = Field(default=60, ge=1)
     lexical_weight: float = Field(default=1.0, ge=0)
@@ -55,6 +58,12 @@ class RetrievalConfig(BaseModel):
     max_per_source: int = Field(default=3, ge=1)
     expand_parent: bool = False
     parent_chars: int = Field(default=1200, ge=0)
+    follow_up: bool = True
+    """A second lexical hop for bridging questions: words adjacent to query terms in the best
+    first-hop chunk (the entity it names, e.g. "payments" in "owned by the payments service") are
+    searched with the query's terms; results are interleaved after the bridging chunk."""
+    follow_up_sources: int = Field(default=1, ge=1, le=5)
+    follow_up_terms: int = Field(default=8, ge=1, le=32)
 
 
 @dataclass
@@ -105,7 +114,14 @@ class KnowledgeRetriever:
         per_query: list[list[RankedChunk]] = []
         for subquery in subqueries:
             lists = await self._retrieve_all(subquery, access, space, timings)
-            per_query.append(self._fuse(subquery, lists))
+            fused_one = self._fuse(subquery, lists)
+            if config.follow_up and fused_one:
+                started = time.perf_counter()
+                fused_one = await self._follow_up(subquery, fused_one, access)
+                timings["follow_up"] = (
+                    timings.get("follow_up", 0.0) + (time.perf_counter() - started) * 1000
+                )
+            per_query.append(fused_one)
         fused = _interleave(per_query) if len(per_query) > 1 else per_query[0]
         if config.rerank:
             started = time.perf_counter()
@@ -202,7 +218,7 @@ class KnowledgeRetriever:
                     timed(
                         "lexical",
                         self._store.search_lexical(
-                            access, query_terms(text), limit=config.candidates
+                            access, self._terms(text), limit=config.candidates
                         ),
                     )
                 )
@@ -215,6 +231,56 @@ class KnowledgeRetriever:
             if config.exact and found:
                 tasks["exact"] = group.create_task(timed("exact", self._exact(found, access)))
         return {name: task.result() for name, task in tasks.items()}
+
+    async def _follow_up(
+        self, text: str, first: list[RankedChunk], access: KnowledgeAccess
+    ) -> list[RankedChunk]:
+        config = self._config
+        asked = self._terms(text)
+        wanted = set(asked)
+        entities: list[str] = []
+        for item in first[: config.follow_up_sources]:
+            words = [w.casefold() for w in tokens(item.chunk.text)]
+            for index, word in enumerate(words):
+                if word not in wanted:
+                    continue
+                # A word next to a query term names what the query only describes: "the service
+                # that owns the ledger" -> "owned by the payments service" -> "payments".
+                for neighbour in (index - 1, index + 1):
+                    if 0 <= neighbour < len(words):
+                        candidate = words[neighbour]
+                        if (
+                            candidate not in wanted
+                            and candidate not in STOPWORDS
+                            and len(candidate) > 2
+                            and not candidate.isdigit()
+                            and candidate not in entities
+                        ):
+                            entities.append(candidate)
+        entities = entities[: config.follow_up_terms]
+        if not entities:
+            return first
+        seen = {r.chunk.chunk_id for r in first[: config.follow_up_sources]}
+        second = [
+            (chunk, score)
+            for chunk, score in await self._store.search_lexical(
+                access, [*entities, *asked], limit=config.candidates
+            )
+            if chunk.chunk_id not in seen
+        ]
+        # The bridge chunk stays first; then the rest of the first hop and the second hop are
+        # interleaved like the parts of a decomposed question.
+        bridge = first[: config.follow_up_sources]
+        hop: list[RankedChunk] = []
+        for chunk, score in second:
+            hop.append(RankedChunk(chunk, score, {"follow_up"}))
+        return bridge + _interleave([first[config.follow_up_sources :], hop])
+
+    def _terms(self, text: str) -> list[str]:
+        if self._config.identifier_analysis:
+            return query_terms(text)
+        words = [w.casefold() for w in re.findall(r"\w+", text)]
+        return [w for w in dict.fromkeys(words) if w not in STOPWORDS and len(w) > 1]
 
     async def _dense(
         self, embedder: EmbeddingProvider, text: str, access: KnowledgeAccess

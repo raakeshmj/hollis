@@ -71,6 +71,9 @@ ignore = [
     "ASYNC2",  # blocking I/O in async tests is harmless; still enforced in src/
     "S105", "S106",  # tests use deliberately fake credentials
 ]
+# Evaluation corpora and labelled cases: document text and query tables read better unwrapped.
+"tests/evals/rag/corpus.py" = ["E501"]
+"tests/evals/rag/grounding_cases.py" = ["E501"]
 
 [tool.pyright]
 include = ["src", "tests"]
