@@ -82,10 +82,13 @@ dependencies = [
 anthropic = [
     { name = "anthropic" },
 ]
+openai-compatible = [
+    { name = "httpx2" },
+]
 
 [package.dev-dependencies]
 dev = [
-    { name = "hollis", extra = ["anthropic"] },
+    { name = "hollis", extra = ["anthropic", "openai-compatible"] },
     { name = "hypothesis" },
     { name = "pyright" },
     { name = "pytest" },
@@ -96,13 +99,14 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=2.3,<3" },
+    { name = "httpx2", marker = "extra == 'openai-compatible'", specifier = ">=2.16,<3" },
     { name = "pydantic", specifier = ">=2.14,<3" },
 ]
-provides-extras = ["anthropic"]
+provides-extras = ["anthropic", "openai-compatible"]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "hollis", extras = ["anthropic"] },
+    { name = "hollis", extras = ["anthropic", "openai-compatible"] },
     { name = "hypothesis", specifier = ">=6.170.14" },
     { name = "pyright", specifier = ">=1.1.414" },
     { name = "pytest", specifier = ">=9.2.0" },
