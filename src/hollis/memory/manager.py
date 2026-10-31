@@ -42,7 +42,7 @@ from hollis.memory.model import (
 )
 from hollis.memory.policy import MemoryPolicy
 from hollis.memory.store import MemoryStore
-from hollis.memory.text import content_hash, normalize_subject, phrase, terms
+from hollis.memory.text import content_hash, normalize_subject, phrase
 from hollis.runtime.memory import (
     Certainty,
     MemoryAccess,
@@ -51,6 +51,7 @@ from hollis.runtime.memory import (
     RecallQuery,
 )
 from hollis.runtime.redaction import Redactor
+from hollis.runtime.text import analyze, query_terms
 
 LEXICAL_WEIGHT = 1.0
 SUBJECT_WEIGHT = 0.6
@@ -335,7 +336,7 @@ class MemoryManager:
         scopes = tuple(dict.fromkeys(query.scopes))
         if not scopes:
             return ()
-        words = terms(query.text)
+        words = query_terms(query.text)
         kinds = tuple(query.kinds)
         pool = max(query.limit * 5, 50)
         scored: dict[str, tuple[MemoryRecord, float]] = {}
@@ -358,11 +359,19 @@ class MemoryManager:
             # score of the match that linked it.
             top = sorted(scored.values(), key=lambda pair: -pair[1])[:HOP_SOURCES]
             known = {s: f" {phrase(s)} " for s in await self._store.subjects(scopes)}
+            known_terms = {s: set(query_terms(s)) for s in known}
             origin: dict[str, float] = {}
             for record, lexical in top:
                 linked = {record.subject} if record.subject else set[str]()
                 mentioned = f" {phrase(record.content)} "
+                content_terms = set(analyze(record.content))
                 linked.update(s for s, w in known.items() if len(w) > 4 and w in mentioned)
+                # Identifier parts count: CUDA_ERROR_OUT_OF_MEMORY mentions "cuda out of memory".
+                linked.update(
+                    s
+                    for s, words in known_terms.items()
+                    if len(words) >= 2 and words <= content_terms
+                )
                 for linked_subject in linked:
                     origin[linked_subject] = max(origin.get(linked_subject, 0.0), lexical)
             if origin:
@@ -379,15 +388,15 @@ class MemoryManager:
             ):
                 scored.setdefault(record.memory_id, (record, 0.0))
 
-        query_terms = set(words)
+        asked = set(words)
         ranked: list[tuple[float, MemoryRecord]] = []
         for record, lexical in scored.values():
             if record.scope not in scopes or not record.valid_at(as_of):
                 continue  # defence in depth against a store that filters incorrectly
             score = lexical
-            subject_terms = set(terms(record.subject)) if record.subject else set[str]()
+            subject_terms = set(query_terms(record.subject)) if record.subject else set[str]()
             if record.subject and (
-                record.subject == subject or (subject_terms and subject_terms <= query_terms)
+                record.subject == subject or (subject_terms and subject_terms <= asked)
             ):
                 score += SUBJECT_WEIGHT  # the whole subject is named in the query
             score += CERTAINTY_WEIGHT * record.certainty.rank

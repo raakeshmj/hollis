@@ -23,8 +23,8 @@ from typing import Any, Self
 
 from hollis.adapters._sqlite import SqliteFile
 from hollis.memory.model import ChangeAction, MemoryChange, MemoryRecord, MemoryStatus
-from hollis.memory.text import terms
 from hollis.runtime.memory import MemoryKind
+from hollis.runtime.text import query_terms
 
 MIGRATIONS = (
     (
@@ -160,7 +160,7 @@ class SqliteMemoryStore:
         kinds: Sequence[MemoryKind] = (),
         limit: int = 50,
     ) -> list[tuple[MemoryRecord, float]]:
-        words = [w for q in query for w in terms(q)]
+        words = [w for q in query for w in query_terms(q)]
         if not scopes or not words:
             return []
         match = " OR ".join('"' + w.replace('"', "") + '"' for w in dict.fromkeys(words))

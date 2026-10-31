@@ -18,8 +18,9 @@ from datetime import datetime
 from typing import Protocol
 
 from hollis.memory.model import MemoryChange, MemoryRecord, MemoryStatus
-from hollis.memory.text import bm25_scores, stem, terms
+from hollis.memory.text import bm25_scores, stem
 from hollis.runtime.memory import MemoryKind
+from hollis.runtime.text import STOPWORDS, analyze
 
 
 class MemoryStore(Protocol):
@@ -89,7 +90,7 @@ class MemoryStore(Protocol):
 
 def document_terms(record: MemoryRecord) -> list[str]:
     text = " ".join(filter(None, (record.content, record.subject, record.key, *record.tags)))
-    return [stem(t) for t in terms(text, limit=10_000)]
+    return [stem(t) for t in analyze(text) if t not in STOPWORDS]
 
 
 class InMemoryMemoryStore:

@@ -46,11 +46,9 @@ async def test_held_out_research_scenario() -> None:
     assert report.rate("memory", "clean") >= 0.85
 
 
-@pytest.mark.xfail(strict=True, reason="known gap: causal link via a machine identifier (ADR-0021)")
-async def test_known_gap_machine_identifier_to_procedure() -> None:
-    """`CUDA_ERROR_OUT_OF_MEMORY` in a log does not lexically match the procedure stored as
-    "CUDA out of memory"; neither subject links nor BM25 bridge it. Strict: if this starts
-    passing, update the evaluation document."""
+async def test_regression_machine_identifier_reaches_the_procedure() -> None:
+    """M4's known gap, closed in M5 by identifier-aware analysis (ADR-0023): the log line's
+    `CUDA_ERROR_OUT_OF_MEMORY` now links to the procedure about "CUDA out of memory"."""
     report = await evaluate(build_research(noise_per_session=40), budget_tokens=BUDGET)
     causal = next(r for r in report.for_condition("memory") if r.probe.pid == "causal")
     assert causal.clean
