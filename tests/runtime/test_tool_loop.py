@@ -516,3 +516,25 @@ async def test_resume_refuses_a_changed_tool_contract(store: RunStore) -> None:
     missing, _ = _runner(store, [])
     with pytest.raises(ToolChanged, match="no longer available"):
         await missing.execute(run.run_id)
+
+
+async def test_no_tool_starts_after_the_deadline(store: RunStore) -> None:
+    write = FakeTool("write", effect=ToolEffect.MUTATING)
+    clock = Clock()
+    runner, _ = _runner(
+        store, [wants(call("write")), answer()], write, approver=Approver(None), clock=clock
+    )
+    run = await runner.create(_spec("write", deadline_s=60))
+    await runner.execute(run.run_id)  # suspended awaiting approval
+    (request,) = await runner.pending_approvals(run.run_id)
+    await runner.resolve_approval(
+        run.run_id, ApprovalDecision(binding=request.binding, approved=True, approver="a")
+    )
+    clock.now += timedelta(minutes=5)  # resumed long after the deadline
+
+    final = await runner.execute(run.run_id)
+
+    assert final.failure is not None
+    assert final.failure.reason is FailureReason.BUDGET_EXHAUSTED
+    assert write.calls == []
+    assert final.turns[0].invocations[0].attempts == 0

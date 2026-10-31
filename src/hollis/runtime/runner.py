@@ -573,6 +573,16 @@ class Runner:
         if state.awaiting_approval:
             return await self._seek_approvals(state)
         pending = state.pending_invocations
+        remaining = self._remaining(state)
+        if (
+            pending
+            and remaining is not None
+            and remaining <= 0
+            and any(i.authorized for i in pending)
+        ):
+            # Never start a tool once the deadline has passed (it could only half-run).
+            message = "deadline reached before tool execution"
+            return await self._fail(state, FailureReason.BUDGET_EXHAUSTED, message, None)
         if pending:
             writer = _Writer(self, state)
             for invocation in pending:
