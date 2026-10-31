@@ -114,10 +114,12 @@ tests/runtime/ tests/adapters/ tests/recovery/ tests/architecture/
 
 **ScriptedModelProvider:**
 - Takes a sequence of `ModelResponse | ModelProviderError`, consumed one per *new* `operation_id`.
-- A repeated `operation_id` returns the cached outcome. That models a provider that deduplicates.
+- A repeated `operation_id` with an *identical* request returns the cached outcome. That models a provider that deduplicates.
+- Reusing an `operation_id` with a different request raises `OperationIdReused`. It deliberately isn't a `ModelProviderError`, because it signals a caller bug.
 - Counters:
-  - `invocations`: physical calls.
-  - `generations`: logical, i.e. cache misses.
+  - `invocations`: physical calls, including deduplicated retries and rejected reuse.
+  - `generations`: operations that produced a response.
+  - `rejections`: operations rejected with `ModelProviderError`.
   - `invocations_by_operation`.
 - If the script runs out, it raises `ScriptExhausted`, which is loud in tests.
 
@@ -179,7 +181,7 @@ CREATE TRIGGER events_no_delete BEFORE DELETE ON events BEGIN SELECT RAISE(ABORT
 **Counting:**
 - Intents: `ModelCallStarted` events, an upper bound on attempts initiated. An intent with no invocation is possible (a crash in between).
 - Physical attempts: `provider.invocations`.
-- Logical generations: `provider.generations`.
+- Successful logical generations: `provider.generations`. Definitive rejections are counted separately in `provider.rejections`.
 - Durable responses: `ModelResponseRecorded` events.
 
 | # | Crash point | Injected by | Expected after `execute()` resumes |
@@ -199,9 +201,11 @@ CREATE TRIGGER events_no_delete BEFORE DELETE ON events BEGIN SELECT RAISE(ABORT
   - Documented as process-death recovery only. It doesn't simulate OS or power failure. Skipped on Windows.
 
 ## 8. Security and persistence
-- **Persisted:** run input text, instructions, model name, response content, token usage, failure type and message. These may contain user data.
-- **Never persisted:** credentials or API keys. M1 has no provider configuration in events or `ModelRequest`, and `extra="forbid"` stops undeclared fields from entering payloads.
-- **Known gaps (documented):** SQLite data is **not encrypted at rest**, and the DB file is created `0600`. The secret-redaction tests (NFR-4) are written in M2, when real credentials and provider error messages exist.
+- **Persisted verbatim:** run input text, instructions, model name, response content, token usage, failure type and message. The message is the unsanitized `str()` of the provider exception. Any of these can contain user data or secret-like values.
+- **Not written by the runtime itself:** provider credentials. They aren't part of `ModelRequest` or any payload, and M1's only provider has none.
+- **Not guaranteed:** secrets embedded in user-supplied strings, model output or error messages *are* persisted. `extra="forbid"` rejects undeclared fields only; it doesn't inspect string values.
+- **Known gaps (documented):** SQLite data is **not encrypted at rest** (the DB file is created `0600`), and there's no retention or deletion policy.
+- **M2 requirements:** credential references, redaction, error sanitization, tests and a retention policy. See [requirements](../product/requirements.md#data-persisted-in-m1-and-secret-handling).
 
 ## 9. Testing
 - **Dependencies:**
@@ -299,3 +303,7 @@ Real providers, streaming, tools, multi-turn execution, budgets and step limits,
 - **pytest configuration:** `--import-mode=importlib` and `pythonpath = ["."]`, so nested test directories can share `tests/support/`.
 - **`RunState` stores** status, version, run inputs, `operation_id`, `attempts`, `response` and `failure`, as planned. The fold additionally requires `ModelResponseRecorded.attempt` to equal the latest attempt.
 - **Resolved versions:** pydantic 2.14.2 (runtime); hypothesis 6.170.14 and pytest-asyncio 1.4.1 (dev).
+- **Post-review correction:**
+  - Fake-provider idempotency is now request-aware (`OperationIdReused`).
+  - `generations` counts only successful generations, with rejections counted separately.
+  - §8 now states plainly that M1 persists user-supplied strings verbatim.

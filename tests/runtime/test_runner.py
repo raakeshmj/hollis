@@ -98,7 +98,7 @@ async def test_definitive_provider_error_fails_the_run(store: RunStore) -> None:
         "content policy",
     )
     assert final.response is None
-    assert provider.invocations == 1
+    assert (provider.invocations, provider.generations, provider.rejections) == (1, 0, 1)
 
 
 async def test_unexpected_provider_exception_leaves_run_resumable(store: RunStore) -> None:

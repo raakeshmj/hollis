@@ -5,7 +5,7 @@
 - **Deterministic checks first.** Formatting, linting, strict type checking and tests run through `make check`, locally and in CI. A change is not done until `make check` passes. Never report a check as passing without running it.
 - **Test behavior, not implementation.** Tests go through public interfaces. A refactor that keeps behavior shouldn't break tests.
 - **Fakes over mocks.** Ports get real in-memory or scripted adapters (fake provider, in-memory store) that are shared across tests. Patching internals is a last resort.
-- **Invariants are tests.** Architectural rules that matter (dependency direction, no vendor imports in the core, secrets never persisted) are automated tests, not prose.
+- **Invariants are tests.** Architectural rules that matter (dependency direction, no vendor imports in the core, and from M2, secrets never persisted) are automated tests, not prose.
 - **No network in the default suite.** Tests that need a real provider get a marker and are opt-in (from M2).
 - **Agent evaluation waits for an agent.** We don't build benchmark infrastructure before there is a runtime worth evaluating.
 
@@ -33,7 +33,7 @@ Each property maps to a requirement and gets a test when its component exists. �
 | Stale appends never succeed; batches are atomic; both stores pass one contract | NFR-2 | ✅ M1 `tests/adapters/` |
 | Core modules import no adapter or vendor SDK | NFR-7 | ✅ M1 `tests/architecture/` |
 | Budgets stop a run cleanly when exceeded | NFR-6 | M2 |
-| Secrets never appear in persisted events or logs | NFR-4 | M2 |
+| Secrets never appear in persisted events or logs | NFR-4 | M2. **Not true in M1:** user-supplied strings, responses and error messages are stored verbatim ([gap](../product/requirements.md#data-persisted-in-m1-and-secret-handling)) |
 | Tool arguments failing schema validation never execute | NFR-4, FR-6 | M3 |
 | Policy-denied tool calls never execute and are recorded as denied | FR-7 | M3 |
 

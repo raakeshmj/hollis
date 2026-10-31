@@ -28,7 +28,7 @@ A crash can happen **after the provider has generated a response but before the 
 **Observability:** four things are counted separately:
 - Intents (`ModelCallStarted` events): attempts *initiated*. An intent may never reach the provider if the crash happens first.
 - Physical invocations (what the provider received).
-- Logical generations (what the provider actually generated).
+- Successful logical generations: responses the provider actually produced. The fake counts definitive rejections separately, and treats reuse of an operation id with a different request as an error.
 - Recorded responses.
 
 ## Alternatives considered
@@ -49,4 +49,4 @@ A crash can happen **after the provider has generated a response but before the 
   - A provider capability declaring whether it deduplicates by idempotency key.
   - An explicit policy for ambiguous outcomes (`retry` vs `fail_on_ambiguous`), with limits on retries and resumes.
   - A decision on whether "outcome unknown" needs its own event.
-- Evidence: `tests/recovery/test_crash_recovery.py` checks every crash boundary against both stores. Crashing between generation and recording yields 2 invocations, 1 generation and 1 recorded response. A recorded response never reinvokes, even with a provider that would fail on any call.
+- Evidence: `tests/recovery/test_crash_recovery.py` checks every crash boundary against both stores. Crashing between generation and recording yields 2 invocations, 1 successful generation, 0 rejections and 1 recorded response. The retry carries an identical request; a mismatch would raise `OperationIdReused`. A recorded response never reinvokes, even with a provider that would fail on any call.

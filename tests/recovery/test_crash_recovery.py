@@ -3,7 +3,8 @@
 Counting vocabulary:
 - intents: ModelCallStarted events (attempts initiated; an intent may never reach the provider)
 - invocations: physical calls the provider received
-- generations: logical generations the provider performed (deduplicated by operation id)
+- generations: successful logical generations (responses produced, deduplicated by operation
+  id); definitive rejections are counted separately as provider.rejections
 - recorded: ModelResponseRecorded events (durable responses; at most one per logical call)
 """
 
@@ -102,6 +103,7 @@ async def test_recovery_from_boundary(store: RunStore, boundary: str) -> None:
     assert final == fold(log) == await load_run(store, run_id)
     assert provider.invocations == expected.invocations_after
     assert provider.generations == 1  # the logical generation was never repeated
+    assert provider.rejections == 0
     assert _count(log, EventType.MODEL_CALL_STARTED) == expected.intents
     assert _count(log, EventType.MODEL_RESPONSE_RECORDED) == 1
     assert final.response == FIRST

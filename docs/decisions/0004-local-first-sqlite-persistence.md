@@ -21,7 +21,7 @@ Runs must survive process crashes (NFR-2) and be inspectable afterwards (NFR-9).
   - Ordered statement lists, tracked in `PRAGMA user_version`, applied in one `BEGIN IMMEDIATE` transaction.
   - A database newer than the code is refused (`SchemaTooNew`).
 - **Default rollback-journal mode.** The proposal said WAL. It's dropped because nothing in M1 needs concurrent readers during writes, and it adds `-wal`/`-shm` files and different durability semantics. Adopt it only with a measured need.
-- New database files are created with mode `0600`. Data is **not encrypted at rest**.
+- New database files are created with mode `0600`. Data is **not encrypted at rest**. Run input, instructions, responses and failure messages are stored verbatim, and the store neither redacts secrets nor deletes data. See the M1 data and secret-handling gap in [requirements](../product/requirements.md#data-persisted-in-m1-and-secret-handling).
 - An in-memory adapter exists for tests and ephemeral runs.
 
 ## Alternatives considered

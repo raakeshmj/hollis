@@ -51,14 +51,16 @@ uv add <pkg> / uv add --dev <pkg>   # updates uv.lock (commit it)
 
 - Every behavior change ships with a test. Test through public interfaces, and prefer shared fakes (fake provider, in-memory store) over mocks.
 - The default suite never touches the network.
-- Enforce important invariants with tests, not prose. Examples: import boundaries, secrets never persisted, illegal state transitions rejected.
+- Enforce important invariants with tests, not prose. Examples: import boundaries, illegal state transitions rejected.
 - Run `make check` before declaring work done. Never report a check as passing without running it, and report actual results.
 
 ## Constraints
 
 - Modular monolith. No microservices, distributed infrastructure, vector databases or model-training infrastructure.
 - Local-first: everything must work on one machine. Storage sits behind a port. SQLite is the store, assuming a single process and a single active runner ([ADR-0004](docs/decisions/0004-local-first-sqlite-persistence.md)).
-- Treat model output as untrusted input. Secrets must never enter persisted events or logs.
+- Treat model output as untrusted input.
+- Never put credentials into requests, events or logs.
+- M1 persists input, instructions, responses and failure messages verbatim, with no redaction. Don't claim otherwise, and don't add real providers until the M2 secret-handling requirements are met ([docs/product/requirements.md](docs/product/requirements.md#data-persisted-in-m1-and-secret-handling)).
 
 ## Workflow
 

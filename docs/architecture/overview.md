@@ -80,7 +80,7 @@ Packages appear only when there is code to put in them. Nothing gets created to 
 - Model output is untrusted input. Tool arguments are validated against typed schemas before anything runs.
 - Tools run with least privilege under an explicit policy (allow, deny or ask) attached to the agent or run.
 - Execution goes through a `ToolExecutor` port, so isolation (subprocess, container, remote) is swappable.
-- Secrets are referenced by name and resolved at execution time. They never enter persisted events, logs or model context unless explicitly allowed (NFR-4).
+- Secrets are referenced by name and resolved at execution time. They never enter persisted events, logs or model context unless explicitly allowed (NFR-4; target design, not yet met in M1 — see [the gap](../product/requirements.md#data-persisted-in-m1-and-secret-handling)).
 - Every tool call and its result is recorded.
 
 **Open.**
@@ -95,6 +95,7 @@ Packages appear only when there is code to put in them. Nothing gets created to 
 - Stdlib `sqlite3`, one connection per operation in a worker thread.
 - `BEGIN IMMEDIATE` appends, the default rollback journal, `PRAGMA user_version` migrations.
 - Assumes a single process and a single active runner. Not encrypted at rest.
+- Run data (input, instructions, responses, failure messages) is stored verbatim, with no redaction or retention policy yet ([gap and M2 requirements](../product/requirements.md#data-persisted-in-m1-and-secret-handling)).
 
 **Open.**
 - Cloud deployment target and packaging. Expected to be one container running the same monolith plus a networked database adapter, decided when a cloud use case is concrete.
