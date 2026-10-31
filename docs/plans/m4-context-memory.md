@@ -131,3 +131,19 @@ Levers apply only under pressure, which keeps the provider's prompt-cache prefix
 5. Evaluation suite.
 6. Security and architecture tests.
 7. ADRs and documentation.
+
+## Implementation notes (end of M4)
+
+Implemented as planned, with these findings and deviations:
+
+- **The evaluation changed retrieval.** The first run showed multi-session evidence at 0%: subject bonuses fired on generic words ("service"), and one-hop expansion followed only the subjects of matches, not entities their content mentions. Recall now requires the whole subject in the query and follows entity links with a decayed inherited score. A held-out scenario was written afterwards and scored 91% clean without tuning. Its one miss (machine identifier → procedure) is a strict `xfail` ([evaluation](../architecture/evaluation.md)).
+- **Embeddings were not added.** The lexical design met the evaluation, and an embedding scorer would need a gateway task family plus evidence of benefit. Deferred to M5 (ADR-0021).
+- **Recall happens once, at run start**, to keep the prompt-cache prefix stable. Later retrieval is through `memory_recall`. This choice came from the cache-stability analysis, not from measurement.
+- **Review fixes:**
+  - The memory tools accepted time-zone-naive times, which would crash comparisons; they're now rejected at validation (`f28c8b5`).
+  - The registered-secret check was masked by the pattern check in tests; a test now covers it with pattern checks disabled.
+  - A manager-level scope filter had no test until a leaky-store test was added.
+- **Milestone numbering:** knowledge retrieval is M5, as the milestone brief specified, so developer interfaces move to M6 and multi-agent coordination to M7.
+- **Live verification:** nothing live ran. Ollama is installed but has no models, there are no API keys, and nothing else serves inference locally. The opt-in live memory evaluation and the earlier live tests remain unrun.
+
+Verification: `make check` passes offline (ruff, pyright strict, pytest). 19 mutation checks of M4 protections all fail tests when the protection is removed.

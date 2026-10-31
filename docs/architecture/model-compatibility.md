@@ -38,6 +38,15 @@ Tool calling is implemented for both protocols and declared (`tools=True`) only 
 
 `tests/live/test_tool_calling_live.py` runs one tool round trip against Anthropic's API when enabled. It has not been run.
 
+## Context windows and token counting (M4)
+
+Presets declare no `context_window_tokens`: windows depend on the model, not the server. Set it per deployment. Without it, the context engine applies only a configured `max_input_tokens` or `max_history_turns`, and records that the window is unknown.
+
+| Protocol | Exact token counting | Status |
+|---|---|---|
+| `anthropic-messages` | `count_tokens` (`TokenCounter` port), used near the budget limit | documented (offline mock-transport tests only) |
+| `openai-chat-completions` | none: no standard endpoint; heuristic estimate calibrated from reported usage | n/a |
+
 ## Recording a verification
 
 Run the live conformance suite (see `tests/conformance/test_conformance.py`) and add a row:

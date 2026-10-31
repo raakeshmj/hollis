@@ -17,7 +17,8 @@
 | Contract | One shared test suite every adapter of a port must pass (for example, in-memory and SQLite `RunStore`) | From M1 |
 | Integration | Full runs through the runtime with the scripted fake provider, incl. crash injection | From M1 |
 | Architecture | Import-boundary tests (AST-based, stdlib only) | From M1 |
-| Behavioral evals | Assertions on agent trajectories against real models | Pending live access |
+| Context and memory evals | Multi-session scenarios and compaction fidelity, model-free context sufficiency against baselines ([evaluation](evaluation.md)) | ✅ M4 (offline) |
+| Behavioral evals | Assertions on agent trajectories against real models | Pending live access (opt-in memory eval written, not run) |
 | End-to-end benchmarks | Task-level success on realistic suites | Later |
 
 ## Reliability and security properties to verify
@@ -50,6 +51,15 @@ Each property maps to a requirement and gets a test when its component exists. �
 | Model turns, tool calls, parallelism, timeouts, output size and the deadline bound every run; no tool starts after the deadline | NFR-6 | ✅ M3 |
 | Filesystem tools stay inside their root; the command tool runs no shell, refuses option injection and kills its process group | NFR-4 | ✅ M3 `tests/tools/` (not a sandbox) |
 | MCP: only allowlisted tools are exposed; pinned or changed definitions are refused; real stdio and HTTP transports work | ADR-0017 | ✅ M3 offline; no third-party servers |
+| Every attempt of a logical model call sends the request built from its recorded context plan | NFR-3, FR-4 | ✅ M4 `tests/runtime/test_context.py` |
+| A plan cannot skip uncompacted turns; summaries cannot drop notes; the latest turn is never compacted | FR-8 | ✅ M4 `tests/runtime/test_context_fold.py` |
+| Mandatory context that cannot fit fails the run before calling the model; optional memories are dropped and reported first | FR-8, NFR-6 | ✅ M4 |
+| Compaction keeps every action and note across repeated lossy summaries | FR-8 | ✅ M4 `tests/evals/` |
+| Large results are stored whole, referenced in context, readable only by their own run | FR-8, NFR-4 | ✅ M4 `tests/tools/test_artifacts.py` |
+| Memory is isolated by scope at the store, manager, runner and fold; FTS syntax cannot widen scope | NFR-4 | ✅ M4 `tests/memory/`, `tests/security/` |
+| Updates supersede, corrections retract, conflicts never overwrite, temporary conditions expire; as-of queries see the past | FR-9 | ✅ M4 `tests/memory/test_lifecycle.py` |
+| Credentials are refused in memory and redacted from summaries and artifacts; recalled memories never authorize tools | NFR-4 | ✅ M4 |
+| Deleted memories are gone from the store, index and file bytes; run-log copies remain (honest deletion) | NFR-4 | ✅ M4 |
 
 ## Future behavioral evaluations (once live access is available)
 

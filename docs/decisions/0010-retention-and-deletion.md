@@ -1,6 +1,6 @@
 # ADR-0010: Run data retention and deletion policy
 
-- Status: Accepted (policy only). The mechanism is deferred.
+- Status: Accepted (policy only). The mechanism for runs is deferred. Deletion of derived memories is implemented separately ([ADR-0021](0021-memory-storage-retrieval-and-deletion.md)), and artifacts can be deleted per run ([ADR-0019](0019-artifact-store.md)).
 - Date: 2026-10-31
 
 ## Context

@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Status: direction-setting. Implemented so far (M1–M3): the runtime core (`hollis.runtime`: events, state fold, RunStore, ModelProvider and tool ports, failure taxonomy, budgets, redaction, the multi-turn tool loop), the tool system (`hollis.tools`: `@tool` definitions, registry, rule-based policy, filesystem and command tools, MCP client), the model gateway (`hollis.gateway`: catalog, routing policy, resolution), and adapters (`hollis.adapters`: in-memory and SQLite stores, scripted fake provider, credential loader, endpoint config, Anthropic Messages and OpenAI-compatible Chat Completions protocol adapters). Each section separates **decided** from **open**. Decided items link to ADRs, and open items name the milestone that resolves them.
+Status: direction-setting. Implemented so far (M1–M4): the runtime core (`hollis.runtime`: events, state fold, RunStore, ModelProvider, tool, artifact and memory ports, failure taxonomy, budgets, redaction, the multi-turn tool loop, the context engine), the memory system (`hollis.memory`: records, write policy, lifecycle, recall, memory tools, episodes), the tool system (`hollis.tools`: `@tool` definitions, registry, rule-based policy, filesystem and command tools, MCP client), the model gateway (`hollis.gateway`: catalog, routing policy, resolution), and adapters (`hollis.adapters`: in-memory and SQLite stores, scripted fake provider, credential loader, endpoint config, Anthropic Messages and OpenAI-compatible Chat Completions protocol adapters). Each section separates **decided** from **open**. Decided items link to ADRs, and open items name the milestone that resolves them.
 
 ## Shape
 
@@ -35,10 +35,12 @@ Packages appear only when there is code to put in them. Nothing gets created to 
 | **Model gateway** | Resolves logical model ids to deployments and protocol adapters; routing policy; credential resolution. No fallback or load balancing ([ADR-0011](../decisions/0011-model-gateway-and-deployments.md)). | M2 |
 | **Storage port** | Persists run records and, later, memory. Adapters: in-memory, SQLite, later others. | M1 |
 | **Tool system** | Typed tool definitions, argument validation, deterministic policy and approval, bounded execution with declared isolation, durable result capture, MCP ([ADR-0014](../decisions/0014-tool-runtime-and-durable-lifecycle.md)–[0017](../decisions/0017-mcp-integration.md)). No sandbox backend. | M3 |
-| **Context manager** | Decides what goes into each model call within a token budget. | M4 |
-| **Memory / retrieval** | Long-lived knowledge across runs, behind a storage port. | M4 |
-| **Interfaces** | SDK first. CLI and REST API are thin layers over the same operations. | SDK M1+, CLI/API M5 |
-| **Coordination** | Multi-agent composition built on runs, not a separate engine. | M6 |
+| **Context engine** | Assembles each model call from instructions, input, memories, summaries, history and tools within a token budget; compacts long histories; records every plan ([ADR-0018](../decisions/0018-context-engine.md)). | M4 |
+| **Artifact store** | Complete tool results outside the event log, referenced and read on demand ([ADR-0019](../decisions/0019-artifact-store.md)). | M4 |
+| **Memory** | Governed, scoped, temporal agent memory across runs, behind a storage port ([ADR-0020](../decisions/0020-memory-model-and-lifecycle.md), [ADR-0021](../decisions/0021-memory-storage-retrieval-and-deletion.md)). | M4 |
+| **Knowledge retrieval** | Document ingestion and RAG on M4's retrieval, provenance and context interfaces. | M5 |
+| **Interfaces** | SDK first. CLI and REST API are thin layers over the same operations. | SDK M1+, CLI/API M6 |
+| **Coordination** | Multi-agent composition built on runs, not a separate engine. | M7 |
 
 ## Runtime and harness
 
@@ -78,11 +80,19 @@ Packages appear only when there is code to put in them. Nothing gets created to 
 
 ## Context and memory
 
-**Direction.** Context assembly is an explicit, inspectable step. Each model call records what was included and why. Memory is a storage concern behind a port, not a special subsystem.
+**Decided (M4).**
+- **Assembly is structured and recorded.** Instructions, the verbatim input, context blocks (memories, the latest summary), the verbatim history window and tool specs stay separate. `ContextAssembled` records each call's plan, so retries send identical requests ([ADR-0018](../decisions/0018-context-engine.md)).
+- **Budgets come from the deployment.** The declared context window minus the output reservation and a safety margin, or a configured cap. Estimates say how they were obtained: estimated, calibrated or provider-counted.
+- **Levers under pressure only, least lossy first:** artifact references, compaction, dropping optional memories. Mandatory context that can't fit fails the run.
+- **Compaction never alters the log.** The ledger is rebuilt from events; notes are immutable and carried forward unless resolved with a reason.
+- **Artifacts:** complete tool results in a separate, run-scoped store ([ADR-0019](../decisions/0019-artifact-store.md)).
+- **Memory:** typed records with slots, certainty capped by source, validity versus record time, and explicit update, correction, temporary and conflict semantics. Writes are governed; access is namespace-scoped per run and enforced in the store, manager, runner and fold. Memory never feeds authorization ([ADR-0020](../decisions/0020-memory-model-and-lifecycle.md)).
+- **Storage and retrieval:** SQLite with FTS5; hybrid lexical, metadata, temporal and entity-link recall; no vector or graph database (chosen by [evaluation](evaluation.md)). Deletion is a hard delete with a tombstone, and run-log copies remain ([ADR-0021](../decisions/0021-memory-storage-retrieval-and-deletion.md)).
 
 **Open.**
-- Summarization and truncation strategies (M4).
-- Retrieval backend: chosen by benchmark in M4. No vector database before then (see non-goals).
+- Semantic retrieval (an embeddings gateway task family) and causal links through machine identifiers: M5, if evaluation shows benefit.
+- Model-assisted summarization and extraction quality with real models (no live deployment yet).
+- Multi-process writers for the memory store.
 
 ## Tool execution and security
 
@@ -119,7 +129,7 @@ Packages appear only when there is code to put in them. Nothing gets created to 
 
 **Direction.** The event log *is* the trajectory, so observability and evaluation build on the same record:
 - Unit and integration tests verify runtime mechanics deterministically using the fake provider.
-- Behavioral evals (M2+) assert specific actions in trajectories.
+- Context and memory are evaluated offline against baselines ([evaluation.md](evaluation.md)); behavioral evals against real models await live access.
 - End-to-end benchmarks come later as complementary evidence.
 
 See [testing.md](testing.md).
@@ -152,5 +162,9 @@ See [testing.md](testing.md).
 | MCP via the official SDK; allowlisted, pinned, external | Accepted (M3) | ADR-0017 |
 | Streaming, native non-Anthropic adapters, more task families, cost accounting | Open | — |
 | Sandbox backend, tool egress control | Open | Execution backends |
-| Retrieval backend | Open, chosen by benchmark | M4 |
+| Context engine: recorded plans, budgets, levers, compaction | Accepted (M4) | ADR-0018 |
+| Artifact store for complete tool results | Accepted (M4) | ADR-0019 |
+| Memory model, lifecycle and scope | Accepted (M4) | ADR-0020 |
+| Memory storage (SQLite FTS5), retrieval and deletion semantics | Accepted (M4) | ADR-0021 |
+| Semantic retrieval, document knowledge retrieval | Open | M5 |
 | Cloud deployment target | Open | Undecided |
