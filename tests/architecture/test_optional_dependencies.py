@@ -15,6 +15,9 @@ CORE_MODULES = [
     "hollis.gateway",
     "hollis.tools",
     "hollis.tools.builtin",
+    "hollis.memory",
+    "hollis.adapters.sqlite_memory",
+    "hollis.adapters.artifact_store",
 ]
 OPTIONAL = ("anthropic", "httpx2", "opentelemetry", "mcp")
 
