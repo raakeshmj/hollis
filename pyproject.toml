@@ -76,3 +76,4 @@ xfail_strict = true
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 filterwarnings = ["error"]
+markers = ["live: calls a real external API; opt-in, costs money (see tests/live/)"]
