@@ -205,7 +205,7 @@ CREATE TRIGGER events_no_delete BEFORE DELETE ON events BEGIN SELECT RAISE(ABORT
 - **Not written by the runtime itself:** provider credentials. They aren't part of `ModelRequest` or any payload, and M1's only provider has none.
 - **Not guaranteed:** secrets embedded in user-supplied strings, model output or error messages *are* persisted. `extra="forbid"` rejects undeclared fields only; it doesn't inspect string values.
 - **Known gaps (documented):** SQLite data is **not encrypted at rest** (the DB file is created `0600`), and there's no retention or deletion policy.
-- **M2 requirements:** credential references, redaction, error sanitization, tests and a retention policy. See [requirements](../product/requirements.md#data-persisted-in-m1-and-secret-handling).
+- **M2 requirements:** credential references, redaction, error sanitization, tests and a retention policy. See [requirements](../product/requirements.md#data-persistence-and-secret-handling).
 
 ## 9. Testing
 - **Dependencies:**

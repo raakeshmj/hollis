@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Status: direction-setting. Implemented so far (M1): the runtime core (`hollis.runtime`: events, state fold, RunStore and ModelProvider ports, single-turn runner) and adapters (`hollis.adapters`: in-memory and SQLite stores, scripted fake provider). Each section separates **decided** from **open**. Decided items link to ADRs, and open items name the milestone that resolves them.
+Status: direction-setting. Implemented so far (M1–M2): the runtime core (`hollis.runtime`: events, state fold, RunStore and ModelProvider ports, failure taxonomy, budgets, redaction, single-turn runner) and adapters (`hollis.adapters`: in-memory and SQLite stores, scripted fake provider, credential loader, Anthropic provider). Each section separates **decided** from **open**. Decided items link to ADRs, and open items name the milestone that resolves them.
 
 ## Shape
 
@@ -41,11 +41,11 @@ Packages appear only when there is code to put in them. Nothing gets created to 
 **Decided.** The runtime is the product's foundation. The core is async for I/O-bound paths: model calls, tool execution and storage ([ADR-0003](../decisions/0003-async-first-runtime.md)).
 
 - **State from events.** Run state is a pure fold over an append-only, versioned event log, with an explicit transition table (NFR-1, [ADR-0005](../decisions/0005-event-recorded-run-state.md)).
-- **M1 states:** `pending → model_call_in_flight → model_responded → completed`, plus `failed`, which can only be reached from `model_call_in_flight`.
+- **States (M2):** `pending → model_call_in_flight → (model_responded → completed | attempt_failed → model_call_in_flight | failed)`. `pending` can also go to `failed` (deadline passed before the first attempt). Every attempt ends with a recorded outcome before another starts ([ADR-0007](../decisions/0007-failure-classification-retries-and-ambiguous-policy.md)).
 - **No `interrupted` status.** A crashed run is simply a non-terminal run with no active runner.
 - **No `cancelled` status** until cancellation exists.
 - **One code path.** `Runner.execute` performs both first execution and recovery.
-- **Model-call semantics** ([ADR-0006](../decisions/0006-model-call-execution-semantics.md)):
+- **Model-call semantics** ([ADR-0006](../decisions/0006-model-call-execution-semantics.md), amended by [ADR-0007](../decisions/0007-failure-classification-retries-and-ambiguous-policy.md)). Hollis owns retries, and failures are classified as not processed or ambiguous. The ambiguous policy defaults to `fail` unless the provider deduplicates. Budgets: attempts, output tokens, attempt timeout, deadline.
   - A stable operation id per logical call.
   - An intent is recorded before each attempt.
   - The provider is never reinvoked after a response is recorded.
@@ -53,7 +53,7 @@ Packages appear only when there is code to put in them. Nothing gets created to 
 
 **Open.**
 - Multi-turn and tool-driven execution, and the events they need (M3).
-- Ambiguous-outcome policy per provider capability, and retry/resume limits (M2).
+- A limit on manual resumes of the same run (attempts are bounded; resumes are not).
 - Idempotency strategy for non-repeatable tool side effects (M3).
 - Concurrency model for parallel tool calls (M3).
 
@@ -62,9 +62,9 @@ Packages appear only when there is code to put in them. Nothing gets created to 
 **Decided.** The core defines its own message, tool-call and usage types. No vendor SDK is imported outside an adapter (NFR-7, enforced by tests from M1). A deterministic scripted fake provider is a first-class adapter for testing (NFR-3).
 
 **Open.**
-- Which real provider comes first (M2).
-- Streaming interface shape (M2).
-- Normalizing provider-specific features (structured output, caching, reasoning) without lowest-common-denominator loss (M2+).
+- Streaming interface shape. Needed for responses above the non-streaming bound (ADR-0008).
+- Typed per-run provider options (M2 configures effort per provider instance), to be decided when a second provider shows what's common.
+- Normalizing provider-specific features (structured output, caching, reasoning) without lowest-common-denominator loss.
 
 ## Context and memory
 
@@ -80,7 +80,7 @@ Packages appear only when there is code to put in them. Nothing gets created to 
 - Model output is untrusted input. Tool arguments are validated against typed schemas before anything runs.
 - Tools run with least privilege under an explicit policy (allow, deny or ask) attached to the agent or run.
 - Execution goes through a `ToolExecutor` port, so isolation (subprocess, container, remote) is swappable.
-- Secrets are referenced by name and resolved at execution time. They never enter persisted events, logs or model context unless explicitly allowed (NFR-4; target design, not yet met in M1 — see [the gap](../product/requirements.md#data-persisted-in-m1-and-secret-handling)).
+- Secrets are referenced by name and resolved at execution time. They never enter persisted events, logs or model context unless explicitly allowed (NFR-4; target design, not yet met in M1 — see [the gap](../product/requirements.md#data-persistence-and-secret-handling)).
 - Every tool call and its result is recorded.
 
 **Open.**
@@ -95,7 +95,7 @@ Packages appear only when there is code to put in them. Nothing gets created to 
 - Stdlib `sqlite3`, one connection per operation in a worker thread.
 - `BEGIN IMMEDIATE` appends, the default rollback journal, `PRAGMA user_version` migrations.
 - Assumes a single process and a single active runner. Not encrypted at rest.
-- Run data (input, instructions, responses, failure messages) is stored verbatim, with no redaction or retention policy yet ([gap and M2 requirements](../product/requirements.md#data-persisted-in-m1-and-secret-handling)).
+- Run input and instructions are stored verbatim. Failure messages and logs are redacted, and registered secrets are refused in input ([ADR-0009](../decisions/0009-credentials-and-redaction.md)). Retention is policy only, with no deletion mechanism ([ADR-0010](../decisions/0010-retention-and-deletion.md); [details](../product/requirements.md#data-persistence-and-secret-handling)).
 
 **Open.**
 - Cloud deployment target and packaging. Expected to be one container running the same monolith plus a networked database adapter, decided when a cloud use case is concrete.
@@ -111,8 +111,8 @@ Packages appear only when there is code to put in them. Nothing gets created to 
 See [testing.md](testing.md).
 
 **Open.**
-- Tracing export format (for example, OpenTelemetry), M2+.
-- Cost accounting granularity (M2).
+- Tracing export format (for example, OpenTelemetry). SDK spans are disabled for now; any exporter must apply the `Redactor` to attributes.
+- Cost accounting. Usage is recorded as reported; no reliable pricing source is integrated.
 
 ## Decided vs open
 
@@ -125,8 +125,11 @@ See [testing.md](testing.md).
 | Event-recorded run state, fold, optimistic concurrency | Accepted (M1) | ADR-0005 |
 | Model-call semantics: operation ids, at-least-once, no exactly-once | Accepted (M1) | ADR-0006 |
 | Pydantic v2 for validated domain and boundary types | Adopted (M1) | — |
-| Ambiguous-outcome policy per provider, retry limits | Open | M2 |
-| First real provider, streaming shape | Open | M2 |
+| Failure taxonomy, Hollis-owned retries, ambiguous policy, budgets | Accepted (M2) | ADR-0007 |
+| Anthropic adapter (optional extra, no SDK retries, no idempotency) | Accepted (M2) | ADR-0008 |
+| Credential boundary and redaction | Accepted (M2) | ADR-0009 |
+| Retention and deletion: whole-run, operator-configured | Policy accepted, mechanism open | ADR-0010 |
+| Streaming, per-run provider options, cost accounting | Open | — |
 | Sandbox technology, tool idempotency | Open | M3 |
 | Retrieval backend | Open, chosen by benchmark | M4 |
 | Cloud deployment target | Open | Undecided |

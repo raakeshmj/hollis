@@ -1,6 +1,6 @@
 # ADR-0006: Model-call execution semantics and ambiguous outcomes
 
-- Status: Accepted
+- Status: Accepted; amended by [ADR-0007](0007-failure-classification-retries-and-ambiguous-policy.md) (M2), which replaces "ambiguous outcome means retry" with an explicit, capability-based policy and adds `ModelCallFailed`.
 - Date: 2026-10-31
 
 ## Context

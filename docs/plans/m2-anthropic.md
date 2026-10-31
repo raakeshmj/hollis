@@ -177,3 +177,13 @@ Other providers, routing or fallback, streaming, tools, multi-turn execution, RA
 - **Classification heuristics are explicit choices, not guarantees.** 500/504 treated as ambiguous is conservative and may fail some runs that could have retried safely. 429 without `retry-after` treated as quota exhaustion follows the docs, but the docs could change.
 - **`httpx2.MockTransport`** availability will be confirmed at install. Fallback: a minimal public `httpx2.AsyncBaseTransport` subclass.
 - **Anthropic may add idempotency support later.** Capabilities make that a one-line change in the adapter, plus a test.
+
+## Implementation notes (deviations and findings)
+
+- **Commits 2–4 landed as one commit.** Replacing `ModelProviderError`, adding `ModelCallFailed` and the runner's retry loop can't pass `make check` independently.
+- **SDK 2.3.0 sends API keys as `Authorization: Bearer`,** not `x-api-key`. The adapter test asserts the actual header.
+- **The SDK's status mapping doesn't use its own `ServiceUnavailableError`/`DeadlineExceededError` classes.** 503 and 504 arrive as `InternalServerError`, and 402 as plain `APIStatusError`. Classification therefore uses the typed `status_code` attribute.
+- **The dev group depends on `hollis[anthropic]`,** so `make sync` and CI always install the SDK, and adapter tests can't be skipped by a missing extra.
+- **The fake provider gained `per_attempt=True`** (consume a new scripted failure on each attempt) and ignores `timeout_s` when comparing requests, because attempts of one call legitimately carry shorter timeouts as the deadline approaches.
+- **A closed Anthropic client surfaces as `connection_lost` (ambiguous).** The SDK wraps the "client closed" error as a connection error. Conservative classification was kept rather than special-casing.
+- **Verification:** the full suite passed with `ANTHROPIC_API_KEY` unset and outbound network denied by a macOS sandbox profile. The live test has **not** been run (no key available).
