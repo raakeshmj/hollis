@@ -62,6 +62,7 @@ ignore = [
 "tests/**" = [
     "S101",    # assert is the pytest idiom
     "ASYNC2",  # blocking I/O in async tests is harmless; still enforced in src/
+    "S105", "S106",  # tests use deliberately fake credentials
 ]
 
 [tool.pyright]

@@ -1,0 +1,9 @@
+{
+  "id": "chatcmpl-refusal",
+  "object": "chat.completion",
+  "model": "gpt-5.5",
+  "choices": [
+    {"index": 0, "message": {"role": "assistant", "content": null, "refusal": "I can't help with that."}, "finish_reason": "stop"}
+  ],
+  "usage": {"prompt_tokens": 15, "completion_tokens": 7, "total_tokens": 22}
+}

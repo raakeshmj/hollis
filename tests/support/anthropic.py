@@ -5,7 +5,6 @@ handler fails the test loudly if the script runs out.
 """
 
 import json
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +14,7 @@ from pydantic import SecretStr
 from hollis.adapters.anthropic_messages import AnthropicMessagesProvider
 from hollis.adapters.config import AnthropicMessagesOptions, AuthConfig, BearerAuth, EndpointConfig
 from hollis.runtime.model import DeploymentDescriptor, Locality
+from tests.support.http import MockHTTP
 
 FIXTURES = Path(__file__).parents[1] / "adapters" / "fixtures" / "anthropic"
 TEST_KEY = "sk-ant-api03-TESTKEYvalue-not-real-0123456789abcdef"
@@ -29,8 +29,6 @@ DESCRIPTOR = DeploymentDescriptor(
     locality=Locality.EXTERNAL,
     deduplicates_requests=False,
 )
-
-type Reply = httpx2.Response | Exception | Callable[[httpx2.Request], httpx2.Response]
 
 
 def fixture(name: str) -> dict[str, Any]:
@@ -66,32 +64,7 @@ def api_error(
     )
 
 
-class MockAnthropic:
-    def __init__(self, *replies: Reply) -> None:
-        self._replies = list(replies)
-        self.requests: list[httpx2.Request] = []
-
-    def _handle(self, request: httpx2.Request) -> httpx2.Response:
-        self.requests.append(request)
-        if not self._replies:
-            raise AssertionError(f"unexpected extra request to {request.url}")
-        reply = self._replies.pop(0)
-        if isinstance(reply, Exception):
-            raise reply
-        if callable(reply):
-            return reply(request)
-        return reply
-
-    @property
-    def calls(self) -> int:
-        return len(self.requests)
-
-    def body(self, index: int = -1) -> dict[str, Any]:
-        return json.loads(self.requests[index].content)
-
-    def http_client(self) -> httpx2.AsyncClient:
-        return httpx2.AsyncClient(transport=httpx2.MockTransport(self._handle))
-
+class MockAnthropic(MockHTTP):
     def provider(
         self,
         options: AnthropicMessagesOptions | None = None,

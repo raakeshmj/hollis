@@ -1,0 +1,7 @@
+{
+  "object": "chat.completion",
+  "model": "local-model",
+  "choices": [
+    {"index": 0, "message": {"role": "assistant", "content": [{"type": "text", "text": "Part one, "}, {"type": "text", "text": "part two."}]}, "finish_reason": "length"}
+  ]
+}

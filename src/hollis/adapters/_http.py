@@ -121,11 +121,20 @@ def provider_message(body: object) -> str:
 
 def error_code(body: object) -> str | None:
     """`error.code` from an OpenAI-style error body, if present."""
+    return _error_field(body, "code")
+
+
+def error_type(body: object) -> str | None:
+    """`error.type` from an OpenAI- or Anthropic-style error body, if present."""
+    return _error_field(body, "type")
+
+
+def _error_field(body: object, name: str) -> str | None:
     if isinstance(body, dict):
         error = cast(dict[str, Any], body).get("error")
         if isinstance(error, dict):
-            code = cast(dict[str, Any], error).get("code")
-            return code if isinstance(code, str) else None
+            value = cast(dict[str, Any], error).get(name)
+            return value if isinstance(value, str) else None
     return None
 
 

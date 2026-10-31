@@ -1,0 +1,10 @@
+{
+  "id": "chatcmpl-8f2e1c",
+  "object": "chat.completion",
+  "created": 1793450001,
+  "model": "Qwen/Qwen3-8B",
+  "choices": [
+    {"index": 0, "message": {"role": "assistant", "reasoning_content": "The user wants a greeting.", "content": "Hi there."}, "finish_reason": "stop"}
+  ],
+  "usage": {"prompt_tokens": 20, "completion_tokens": 30, "total_tokens": 50}
+}
