@@ -26,6 +26,11 @@ def content_hash(text: str) -> str:
     return hashlib.sha256(normalize(text).encode()).hexdigest()
 
 
+def phrase(text: str) -> str:
+    """Normalized word sequence, punctuation removed: for matching phrases inside text."""
+    return " ".join(_WORD.findall(normalize(text)))
+
+
 def normalize_subject(subject: str | None) -> str | None:
     if subject is None:
         return None

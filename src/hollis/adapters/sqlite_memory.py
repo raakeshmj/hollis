@@ -219,6 +219,19 @@ class SqliteMemoryStore:
             {"scope": scope},
         )
 
+    async def subjects(self, scopes: Sequence[str]) -> list[str]:
+        if not scopes:
+            return []
+        clause, params = _in("scope", scopes)
+        sql = f"""SELECT DISTINCT subject FROM memories WHERE {clause}
+                  AND status = 'active' AND subject IS NOT NULL ORDER BY subject"""  # noqa: S608  # bound values
+
+        def select() -> list[tuple[str]]:
+            with self._file.reading() as conn:
+                return conn.execute(sql, params).fetchall()
+
+        return [row[0] for row in await asyncio.to_thread(select)]
+
     async def delete(self, memory_ids: Sequence[str], changes: Sequence[MemoryChange]) -> int:
         def remove() -> int:
             with self._file.transaction() as conn:

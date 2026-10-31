@@ -15,7 +15,8 @@ Writing a candidate:
 6. the record and its change-log entries are saved atomically.
 
 Recall ranks records valid at the query time by lexical relevance, subject match, certainty,
-recency and kind, expands one hop through shared subjects, and annotates conflicts. It reads
+recency and kind, expands one hop through shared or mentioned subjects (entity links), and
+annotates conflicts. It reads
 only the scopes it is given; callers pass the run's granted scopes.
 """
 
@@ -41,7 +42,7 @@ from hollis.memory.model import (
 )
 from hollis.memory.policy import MemoryPolicy
 from hollis.memory.store import MemoryStore
-from hollis.memory.text import content_hash, normalize_subject, terms
+from hollis.memory.text import content_hash, normalize_subject, phrase, terms
 from hollis.runtime.memory import (
     Certainty,
     MemoryAccess,
@@ -58,7 +59,8 @@ RECENCY_WEIGHT = 0.2
 RECENCY_HALF_LIFE_DAYS = 30.0
 KIND_PRIOR = {MemoryKind.PREFERENCE: 0.3, MemoryKind.PROCEDURE: 0.1}
 TEMPORARY_BONUS = 0.3
-EXPANSION_DECAY = 0.5
+EXPANSION_DECAY = 0.7
+HOP_SOURCES = 3
 PINNED_KINDS = (MemoryKind.PREFERENCE,)
 """Kinds considered for every recall, whatever the query (preferences shape any task)."""
 
@@ -344,23 +346,33 @@ class MemoryManager:
             scored[record.memory_id] = (record, LEXICAL_WEIGHT * lexical / best)
 
         subject = normalize_subject(query.subject)
-        subjects: set[str] = {subject} if subject else set()
         if subject:
             for record in await self._store.valid(
                 scopes, as_of=as_of, kinds=kinds, subjects=[subject], limit=pool
             ):
                 scored.setdefault(record.memory_id, (record, 0.0))
         else:
-            # One hop: other memories about the subjects of the strongest lexical matches.
-            top = sorted(scored.values(), key=lambda pair: -pair[1])[:5]
-            hop = {r.subject for r, _ in top if r.subject}
-            if hop:
+            # One hop: memories about the subjects of the strongest lexical matches, and about
+            # known subjects those matches mention ("owned by the Falcon team" links to memories
+            # whose subject is "falcon team"). A linked memory inherits a decayed share of the
+            # score of the match that linked it.
+            top = sorted(scored.values(), key=lambda pair: -pair[1])[:HOP_SOURCES]
+            known = {s: f" {phrase(s)} " for s in await self._store.subjects(scopes)}
+            origin: dict[str, float] = {}
+            for record, lexical in top:
+                linked = {record.subject} if record.subject else set[str]()
+                mentioned = f" {phrase(record.content)} "
+                linked.update(s for s, w in known.items() if len(w) > 4 and w in mentioned)
+                for linked_subject in linked:
+                    origin[linked_subject] = max(origin.get(linked_subject, 0.0), lexical)
+            if origin:
                 for record in await self._store.valid(
-                    scopes, as_of=as_of, kinds=kinds, subjects=sorted(hop), limit=pool
+                    scopes, as_of=as_of, kinds=kinds, subjects=sorted(origin), limit=pool
                 ):
-                    if record.memory_id not in scored:
-                        scored[record.memory_id] = (record, 0.0)
-                        subjects.add(record.subject or "")
+                    inherited = EXPANSION_DECAY * origin.get(record.subject or "", 0.0)
+                    current = scored.get(record.memory_id)
+                    if current is None or current[1] < inherited:
+                        scored[record.memory_id] = (record, inherited)
         if not kinds or set(kinds) & set(PINNED_KINDS):
             for record in await self._store.valid(
                 scopes, as_of=as_of, kinds=PINNED_KINDS, limit=20
@@ -373,12 +385,11 @@ class MemoryManager:
             if record.scope not in scopes or not record.valid_at(as_of):
                 continue  # defence in depth against a store that filters incorrectly
             score = lexical
+            subject_terms = set(terms(record.subject)) if record.subject else set[str]()
             if record.subject and (
-                record.subject == subject or set(terms(record.subject)) & query_terms
+                record.subject == subject or (subject_terms and subject_terms <= query_terms)
             ):
-                score += SUBJECT_WEIGHT
-            elif lexical == 0.0 and record.subject in subjects:
-                score += SUBJECT_WEIGHT * EXPANSION_DECAY
+                score += SUBJECT_WEIGHT  # the whole subject is named in the query
             score += CERTAINTY_WEIGHT * record.certainty.rank
             age_days = max((as_of - record.recorded_at).total_seconds() / 86400, 0.0)
             score += RECENCY_WEIGHT * math.pow(0.5, age_days / RECENCY_HALF_LIFE_DAYS)

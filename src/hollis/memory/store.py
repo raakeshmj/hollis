@@ -70,6 +70,10 @@ class MemoryStore(Protocol):
         """Every stored record (optionally of one scope), for maintenance and export."""
         ...
 
+    async def subjects(self, scopes: Sequence[str]) -> list[str]:
+        """Distinct subjects of active records in `scopes` (for entity-linked expansion)."""
+        ...
+
     async def delete(self, memory_ids: Sequence[str], changes: Sequence[MemoryChange]) -> int: ...
 
     async def changes(self, memory_id: str) -> list[MemoryChange]: ...
@@ -178,6 +182,16 @@ class InMemoryMemoryStore:
 
     async def records(self, scope: str | None = None) -> list[MemoryRecord]:
         return [r for r in self._records.values() if scope is None or r.scope == scope]
+
+    async def subjects(self, scopes: Sequence[str]) -> list[str]:
+        allowed = set(scopes)
+        return sorted(
+            {
+                r.subject
+                for r in self._records.values()
+                if r.subject and r.scope in allowed and r.status is MemoryStatus.ACTIVE
+            }
+        )
 
     async def delete(self, memory_ids: Sequence[str], changes: Sequence[MemoryChange]) -> int:
         deleted = 0
