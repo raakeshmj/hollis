@@ -13,10 +13,9 @@ Scopes come from `ToolContext.memory`, which the runtime fills from the run's re
 model can name a scope, but only one the run was granted.
 """
 
-from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import Field
+from pydantic import AwareDatetime, Field
 
 from hollis.memory.manager import MemoryManager
 from hollis.memory.model import ChangeKind, MemoryCandidate, Provenance, SourceKind, WriteAction
@@ -49,7 +48,8 @@ def memory_tools(
         kinds: Annotated[list[Kind], Field(max_length=6)] = [],  # noqa: B006  # pydantic copies defaults
         subject: Annotated[str | None, Field(max_length=200)] = None,
         as_of: Annotated[
-            datetime | None, Field(description="Recall what was valid at this time (ISO 8601)")
+            AwareDatetime | None,
+            Field(description="Recall what was valid at this time (ISO 8601 with time zone)"),
         ] = None,
         limit: Annotated[int, Field(ge=1, le=20)] = 8,
     ) -> str:
@@ -87,7 +87,8 @@ def memory_tools(
         ] = None,
         change: Change = "new",
         valid_until: Annotated[
-            datetime | None, Field(description="End of validity for temporary conditions")
+            AwareDatetime | None,
+            Field(description="End of validity for temporary conditions (ISO 8601 with time zone)"),
         ] = None,
         scope: Annotated[str | None, Field(description="One of the run's writable scopes")] = None,
     ) -> str:

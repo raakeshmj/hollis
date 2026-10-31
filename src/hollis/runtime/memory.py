@@ -14,7 +14,6 @@ authorization decision reads them.
 """
 
 import re
-from datetime import datetime
 from enum import StrEnum
 from typing import Protocol
 
@@ -122,7 +121,7 @@ class RecallQuery(_Frozen):
     limit: int = Field(default=10, ge=1, le=100)
     kinds: tuple[MemoryKind, ...] = ()
     subject: str | None = None
-    as_of: datetime | None = None
+    as_of: AwareDatetime | None = None
     """Return what was valid at this time (default: now)."""
     max_chars: int | None = Field(default=None, ge=1)
     """Stop adding memories once their rendered text would exceed this."""

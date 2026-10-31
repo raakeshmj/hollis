@@ -289,3 +289,21 @@ async def test_invalid_extraction_stores_nothing(manager: MemoryManager, reply: 
     assert report.error is not None
     assert await manager.store.count("user:alice") == 0
     assert not await manager.store.job_done(f"extract:{final.run_id}:user:alice")
+
+
+async def test_recall_tool_rejects_times_without_a_zone(manager: MemoryManager) -> None:
+    registry = ToolRegistry()
+    registry.extend(memory_tools(manager))
+    provider = ScriptedModelProvider(
+        [
+            wants(call("memory_recall", "c1", query="report", as_of="2026-03-01T10:00:00")),
+            wants(call("memory_recall", "c2", query="report", as_of="2026-03-01T10:00:00Z")),
+            answer(),
+        ]
+    )
+    runner = Runner(InMemoryRunStore(), provider, tools=registry, memory=manager)
+    run = await runner.create(_spec(tools=("memory_recall",)))
+    final = await runner.execute(run.run_id)
+    naive, aware = final.turns[0].invocations[0], final.turns[1].invocations[0]
+    assert naive.outcome is ToolOutcome.INVALID  # rejected at validation, never a crash
+    assert aware.outcome is ToolOutcome.SUCCESS
