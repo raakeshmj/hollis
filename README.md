@@ -2,7 +2,7 @@
 
 A model-agnostic, local-first platform for building, running and orchestrating autonomous agents, with a Python SDK first.
 
-**Status: pre-alpha. M4 (context engineering and memory), M3 (tool runtime) and M2 (universal model gateway) are implemented and verified offline; no live provider, inference server or third-party MCP server has been tested yet.** See the [roadmap](docs/product/roadmap.md).
+**Status: pre-alpha. M5 (knowledge retrieval and RAG), M4 (context engineering and memory), M3 (tool runtime) and M2 (universal model gateway) are implemented and verified offline; no live provider, inference server or third-party MCP server has been tested yet.** See the [roadmap](docs/product/roadmap.md).
 
 ## What exists today
 
@@ -23,6 +23,12 @@ A model-agnostic, local-first platform for building, running and orchestrating a
   - Hybrid keyword and metadata recall on SQLite FTS5, at run start and on demand through a tool.
   - Writes are governed by policy: credentials refused, model writes need approval by default. Deletion leaves a tombstone.
   - [Evaluated](docs/architecture/evaluation.md) against no-memory and raw-history baselines.
+- **Knowledge retrieval and RAG** ([ADR-0022](docs/decisions/0022-embedding-task.md)–[0025](docs/decisions/0025-rag-grounding-and-security.md)):
+  - **Ingestion:** Markdown, HTML, code, JSON, CSV, DOCX and PDF (optional extra), with structure, locations, versions and content fingerprints. Directory sync removes deleted files; unchanged content is never re-indexed.
+  - **Retrieval:** hybrid lexical, dense and exact-identifier retrieval on SQLite, with access labels enforced inside every query. Embeddings come from any OpenAI-compatible endpoint through the gateway, or from a local model-free hashing embedder.
+  - **In runs:** cited passages in context (kept separate from memory), plus search, outline, read and find tools for large documents.
+  - **Grounding:** a report flags fabricated or unsupported citations.
+  - **Evaluation:** compared across configurations on a development and a held-out corpus ([evaluation](docs/architecture/rag-evaluation.md)).
 - **Tools** ([ADR-0015](docs/decisions/0015-tool-definitions-policy-and-approval.md)–[0017](docs/decisions/0017-mcp-integration.md)): `@tool` on a typed function, a registry, rule-based policy, root-scoped filesystem tools, a fixed-command tool, and an MCP client (stdio and Streamable HTTP) with per-tool allowlists and definition pinning.
 - **Event-sourced run state.** Every run is an append-only, versioned event log, folded into state. Invalid sequences are rejected loudly; appends use optimistic concurrency.
 - **Universal model gateway.** Runs name a logical model. A catalog (Python or `hollis.toml`) maps it to a *deployment*: protocol, endpoint, wire model id, locality and declared capabilities ([ADR-0011](docs/decisions/0011-model-gateway-and-deployments.md)).
@@ -47,10 +53,11 @@ A model-agnostic, local-first platform for building, running and orchestrating a
 - **No live verification.** Adapters are tested against mock transports, documented response shapes and a loopback server. Run the opt-in conformance suite against your server to verify it.
 - **No sandbox.** Function and filesystem tools run in-process; the command tool and MCP stdio servers are separate processes with your user's privileges. None of this is a sandbox ([ADR-0016](docs/decisions/0016-execution-isolation.md)); don't use these tools to run untrusted code.
 - **Tool calling, compaction and memory are untested against live models,** and the MCP client against third-party servers. The memory evaluation measures whether the right evidence reaches the context; whether a model then answers correctly is tested only by an opt-in live evaluation that hasn't run.
-- **Memory retrieval is lexical** (keywords, subjects, entity links); there are no embeddings. Paraphrases with no shared words, and causal links through machine identifiers, can be missed.
+- **No real embedding model has been tested.** Dense retrieval is evaluated only with the local hashing embedder (surface similarity, not meaning) and a simulated one. Memory recall remains lexical. The grounding check is lexical: it verifies citations, not truth, and doesn't detect negation.
+- **Exact dense scan** is linear (about 240 ms at 20,000 chunks of 384 dimensions); larger collections need an approximate index. There's no OCR, multimodal retrieval or web connector.
 - **Deleting a memory doesn't erase copies in run logs** that recalled it. Runs themselves can't be deleted yet.
 - **Text generation only; non-streaming.** Responses are capped at about 21k output tokens on the Anthropic protocol.
-- **Not yet built:** document knowledge retrieval (RAG, M5); native adapters beyond Anthropic (for example OpenAI's Responses API, Gemini or Bedrock); cancellation and multi-agent orchestration; a CLI or REST API beyond `hollis --version`.
+- **Not yet built:** native adapters beyond Anthropic (for example OpenAI's Responses API, Gemini or Bedrock); cancellation and multi-agent orchestration; a CLI or REST API beyond `hollis --version`.
 - **No cost accounting or input-token budgets.** Usage is recorded as reported.
 - **Run input is stored verbatim.** Secrets embedded in user text are not detected unless they're registered credentials ([details](docs/product/requirements.md#data-persistence-and-secret-handling)).
 - **No deletion mechanism yet** (policy only, [ADR-0010](docs/decisions/0010-retention-and-deletion.md)). SQLite data is not encrypted at rest. Single process, single active runner per run.
@@ -163,6 +170,36 @@ run = await runner.create(
 
 Declare `context_window_tokens` in the deployment's capabilities so the context engine knows the budget.
 
+## Knowledge retrieval
+
+```python
+from hollis.adapters.sqlite_knowledge import SqliteKnowledgeStore
+from hollis.knowledge.ingest import KnowledgeBase
+from hollis.knowledge.retrieve import KnowledgeRetriever
+from hollis.knowledge.tools import knowledge_tools
+from hollis.runtime.knowledge import KnowledgeAccess
+
+embedder = gateway.embedder("local-embed")  # or HashingEmbedder(): no model needed
+store = await SqliteKnowledgeStore.open("knowledge.db")
+kb = KnowledgeBase(store, embedder=embedder, redactor=gateway.redactor)
+await kb.create_collection("runbooks")
+await kb.sync_directory("runbooks", "docs/runbooks", labels=("group:sre",))
+retriever = KnowledgeRetriever(store, embedder=embedder)
+registry.extend(knowledge_tools(store, retriever))  # search, list, outline, read, find
+runner = gateway.runner(run_store, tools=registry, knowledge=retriever)
+run = await runner.create(
+    RunSpec(
+        model="claude",
+        input="The ETL job failed with CUDA_ERROR_OUT_OF_MEMORY. What now?",
+        knowledge=KnowledgeAccess(collections=("runbooks",), labels=("group:sre",)),
+        tools=("knowledge_search", "knowledge_read"),
+        budget=RunBudget(max_output_tokens=2048),
+    )
+)
+final = await runner.execute(run.run_id)
+final.grounding  # per-claim support for the answer's citations
+```
+
 ## Quickstart
 
 Requires [uv](https://docs.astral.sh/uv/) and Python ≥ 3.12. No API key is needed for development or tests.
@@ -186,7 +223,7 @@ HOLLIS_LIVE_TESTS=1 ANTHROPIC_API_KEY=... uv run pytest tests/live -m live -ra
 ## Documentation
 
 - [Vision and scope](docs/product/vision.md) · [Requirements](docs/product/requirements.md) · [Roadmap](docs/product/roadmap.md)
-- [Architecture overview](docs/architecture/overview.md) · [Model compatibility](docs/architecture/model-compatibility.md) · [Testing strategy](docs/architecture/testing.md) · [Memory evaluation](docs/architecture/evaluation.md)
-- [Decision records](docs/decisions/) · Plans: [M1](docs/plans/m1-runtime-core.md), [M2 gateway](docs/plans/m2-gateway.md), [M2 Anthropic](docs/plans/m2-anthropic.md), [M3 tools](docs/plans/m3-tools.md), [M4 context and memory](docs/plans/m4-context-memory.md)
+- [Architecture overview](docs/architecture/overview.md) · [Model compatibility](docs/architecture/model-compatibility.md) · [Testing strategy](docs/architecture/testing.md) · [Memory evaluation](docs/architecture/evaluation.md) · [RAG evaluation](docs/architecture/rag-evaluation.md)
+- [Decision records](docs/decisions/) · Plans: [M1](docs/plans/m1-runtime-core.md), [M2 gateway](docs/plans/m2-gateway.md), [M2 Anthropic](docs/plans/m2-anthropic.md), [M3 tools](docs/plans/m3-tools.md), [M4 context and memory](docs/plans/m4-context-memory.md), [M5 knowledge](docs/plans/m5-knowledge.md)
 - [Development process](docs/development.md)
 - [Research notes](docs/research/)

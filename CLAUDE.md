@@ -6,20 +6,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Hollis is a model-agnostic, local-first platform for building, running and orchestrating autonomous agents (Python SDK first, with a CLI and REST API later). The **runtime and harness** are the foundation. Coding agents are one specialization, so don't let the core assume coding tasks.
 
-**Current milestone: M4 (context engineering and memory) is implemented and verified offline, on M3 (tools) and M2 (model gateway). No live endpoint or third-party MCP server has been tested, and no sandbox exists. M5 (knowledge retrieval / RAG) is not yet planned.** Don't implement work from later milestones. See [docs/product/roadmap.md](docs/product/roadmap.md).
+**Current milestone: M5 (knowledge retrieval and RAG) is implemented and verified offline, on M4 (context and memory), M3 (tools) and M2 (gateway). No live model, embedding model or third-party MCP server has been tested, and no sandbox exists. The next milestone is not yet planned.** Don't implement work from later milestones. See [docs/product/roadmap.md](docs/product/roadmap.md).
 
 ## Repository map
 
 - `src/hollis/runtime/`: the core. Events and schema registry, state fold, RunStore and ModelProvider ports, the tool port (`tools.py`), artifact and memory ports, the context engine (`context.py` types, `assembly.py` planning, `compaction.py` summarizers), conversation history, result handling, failure taxonomy, budgets, `Redactor`, `Runner`. It imports only stdlib, pydantic and itself (enforced by `tests/architecture/`).
 - `src/hollis/gateway/`: deployment catalog (Python or TOML), presets, routing policy, `ModelGateway` (implements the runtime's `ModelResolver`).
 - `src/hollis/tools/`: `@tool` function tools, `ToolRegistry`, `RulePolicy`, built-in filesystem and command tools (`builtin/`), MCP client (`mcp.py`, optional extra).
+- `src/hollis/knowledge/`: extraction (`extract.py`), sanitization, chunking, ingestion lifecycle (`ingest.py`, `KnowledgeBase`), hybrid retrieval (`retrieve.py`), knowledge tools. Separate from memory. SQLite lives in `adapters/sqlite_knowledge.py`; embeddings in `adapters/openai_embeddings.py` and `adapters/local_embeddings.py`.
 - `src/hollis/memory/`: memory records, write policy, `MemoryManager` (lifecycle, recall, deletion, maintenance), memory tools, episodes and extraction. Storage-independent; SQLite lives in `adapters/sqlite_memory.py`.
 - `src/hollis/adapters/`: stores, fake provider, credentials, endpoint config (`config.py`, SDK-free), shared HTTP layer (`_http.py`), protocol adapters `anthropic_messages.py` (official SDK) and `openai_chat.py` (raw httpx2). Provider SDKs and httpx2 are optional extras, loaded only by their adapter (enforced by subprocess tests).
-- `tests/`: `runtime/`, `tools/`, `memory/`, `evals/` (memory and compaction evaluation; `python -m tests.evals.report`), `security/` (agentic attack scenarios), `adapters/` (mock transports), `gateway/`, `network/` (real loopback sockets and TLS), `conformance/` (offline, plus opt-in live via `HOLLIS_CONFORMANCE_*`), `recovery/`, `architecture/`, `live/`. Shared helpers live in `tests/support/`.
+- `tests/`: `runtime/`, `tools/`, `memory/`, `knowledge/`, `evals/` (memory and compaction: `python -m tests.evals.report`; retrieval: `python -m tests.evals.rag.report`), `security/` (agentic attack scenarios), `adapters/` (mock transports), `gateway/`, `network/` (real loopback sockets and TLS), `conformance/` (offline, plus opt-in live via `HOLLIS_CONFORMANCE_*`), `recovery/`, `architecture/`, `live/`. Shared helpers live in `tests/support/`.
 - `docs/product/`: vision and non-goals, requirements (FR-x / NFR-x IDs), roadmap.
-- `docs/architecture/`: `overview.md` (components, decided vs open), `testing.md` (test and eval strategy), `evaluation.md` (memory evaluation results).
+- `docs/architecture/`: `overview.md` (components, decided vs open), `testing.md` (test and eval strategy), `evaluation.md` and `rag-evaluation.md` (evaluation results).
 - `docs/decisions/`: ADRs. Use `0000-template.md` for new ones.
-- `docs/plans/`: milestone implementation plans (`m4-context-memory.md` is the most recent).
+- `docs/plans/`: milestone implementation plans (`m5-knowledge.md` is the most recent).
 - `docs/research/`: research notes with adopt now / later / no verdicts.
 - `docs/development.md`: workflow, ADR policy, when to add skills, rules, hooks or subagents.
 
@@ -64,6 +65,11 @@ HOLLIS_LIVE_TESTS=1 ANTHROPIC_API_KEY=... uv run pytest tests/live -m live   # o
   - Summaries are derived: never alter or drop events; notes are only added or resolved with a reason.
   - Memory writes go through `MemoryManager` (policy, slots); memory access only through the run's `MemoryAccess` grant. Memory never feeds tool policy.
   - Deleting a memory doesn't erase run-log copies; don't claim otherwise.
+- Knowledge ([ADR-0022](docs/decisions/0022-embedding-task.md)–[0025](docs/decisions/0025-rag-grounding-and-security.md)):
+  - Access is enforced in the store's SQL before scoring, and re-checked by the runner and fold; document content never sets labels, trust or identity.
+  - Never compare vectors across embedding spaces; changing models means `migrate_embeddings`.
+  - Knowledge never writes memory. Retrieved text is data: framed, citation keys assigned by Hollis, never an input to authorization.
+  - Dense results from the hashing or simulated embedders are not semantic-quality evidence; don't claim otherwise.
 - Don't create packages or modules to reserve namespace. Create them when there is code for them.
 - Don't add dependencies without a justification in the commit message. Architecture-shaping dependencies need an ADR.
 

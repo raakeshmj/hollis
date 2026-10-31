@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Status: direction-setting. Implemented so far (M1–M4): the runtime core (`hollis.runtime`: events, state fold, RunStore, ModelProvider, tool, artifact and memory ports, failure taxonomy, budgets, redaction, the multi-turn tool loop, the context engine), the memory system (`hollis.memory`: records, write policy, lifecycle, recall, memory tools, episodes), the tool system (`hollis.tools`: `@tool` definitions, registry, rule-based policy, filesystem and command tools, MCP client), the model gateway (`hollis.gateway`: catalog, routing policy, resolution), and adapters (`hollis.adapters`: in-memory and SQLite stores, scripted fake provider, credential loader, endpoint config, Anthropic Messages and OpenAI-compatible Chat Completions protocol adapters). Each section separates **decided** from **open**. Decided items link to ADRs, and open items name the milestone that resolves them.
+Status: direction-setting. Implemented so far (M1–M5): the runtime core (`hollis.runtime`: events, state fold, RunStore, ModelProvider, embedding, tool, artifact, memory and knowledge ports, grounding checks, identifier-aware text analysis, failure taxonomy, budgets, redaction, the multi-turn tool loop, the context engine), the memory system (`hollis.memory`: records, write policy, lifecycle, recall, memory tools, episodes), the knowledge system (`hollis.knowledge`: extraction, chunking, ingestion lifecycle, hybrid retrieval, knowledge tools), the tool system (`hollis.tools`: `@tool` definitions, registry, rule-based policy, filesystem and command tools, MCP client), the model gateway (`hollis.gateway`: catalog, routing policy, resolution), and adapters (`hollis.adapters`: in-memory and SQLite stores, scripted fake provider, credential loader, endpoint config, Anthropic Messages and OpenAI-compatible Chat Completions protocol adapters). Each section separates **decided** from **open**. Decided items link to ADRs, and open items name the milestone that resolves them.
 
 ## Shape
 
@@ -38,7 +38,7 @@ Packages appear only when there is code to put in them. Nothing gets created to 
 | **Context engine** | Assembles each model call from instructions, input, memories, summaries, history and tools within a token budget; compacts long histories; records every plan ([ADR-0018](../decisions/0018-context-engine.md)). | M4 |
 | **Artifact store** | Complete tool results outside the event log, referenced and read on demand ([ADR-0019](../decisions/0019-artifact-store.md)). | M4 |
 | **Memory** | Governed, scoped, temporal agent memory across runs, behind a storage port ([ADR-0020](../decisions/0020-memory-model-and-lifecycle.md), [ADR-0021](../decisions/0021-memory-storage-retrieval-and-deletion.md)). | M4 |
-| **Knowledge retrieval** | Document ingestion and RAG on M4's retrieval, provenance and context interfaces. | M5 |
+| **Knowledge** | Ingestion with provenance and structure, hybrid retrieval with access control in the store, cited passages in context, knowledge tools, grounding checks ([ADR-0022](../decisions/0022-embedding-task.md)–[0025](../decisions/0025-rag-grounding-and-security.md)). | M5 |
 | **Interfaces** | SDK first. CLI and REST API are thin layers over the same operations. | SDK M1+, CLI/API M6 |
 | **Coordination** | Multi-agent composition built on runs, not a separate engine. | M7 |
 
@@ -90,7 +90,7 @@ Packages appear only when there is code to put in them. Nothing gets created to 
 - **Storage and retrieval:** SQLite with FTS5; hybrid lexical, metadata, temporal and entity-link recall; no vector or graph database (chosen by [evaluation](evaluation.md)). Deletion is a hard delete with a tombstone, and run-log copies remain ([ADR-0021](../decisions/0021-memory-storage-retrieval-and-deletion.md)).
 
 **Open.**
-- Semantic retrieval (an embeddings gateway task family) and causal links through machine identifiers: M5, if evaluation shows benefit.
+- Real embedding models: dense retrieval is wired through the gateway (M5) but evaluated only with local and simulated embedders.
 - Model-assisted summarization and extraction quality with real models (no live deployment yet).
 - Multi-process writers for the memory store.
 
@@ -110,6 +110,30 @@ Packages appear only when there is code to put in them. Nothing gets created to 
 - Network egress control for tools.
 - An artifact store for tool output above the size limit.
 - Approver identity and an approval UI.
+
+## Knowledge retrieval
+
+**Decided (M5).**
+- **Knowledge is separate from memory:** own store, lifecycle, access model and context kind. It never writes memory; memory is never presented as a source.
+- **Embeddings are a gateway task** with spaces that are never mixed. There's an OpenAI-compatible adapter and a local model-free hashing embedder ([ADR-0022](../decisions/0022-embedding-task.md)).
+- **Ingestion:**
+  - (collection, key) identity; content and index fingerprints; atomic version swaps; directory sync with deletion.
+  - Content-sniffed extraction for Markdown, HTML, code, JSON, CSV, DOCX and PDF; structure-aware chunks with locations.
+  - Identifier-aware analysis ([ADR-0023](../decisions/0023-knowledge-ingestion.md)).
+- **Retrieval:**
+  - SQLite FTS5, an exact identifier index and per-space vectors (exact scan).
+  - Access enforced inside every query.
+  - RRF fusion with exact-first and a follow-up hop, all chosen by [evaluation](rag-evaluation.md) ([ADR-0024](../decisions/0024-knowledge-storage-and-retrieval.md)).
+- **In runs:**
+  - Passages are retrieved once at run start, recorded, and cited by key. They're dropped before memories under pressure.
+  - Knowledge tools support iterative investigation.
+  - A deterministic grounding report covers each final answer ([ADR-0025](../decisions/0025-rag-grounding-and-security.md)).
+
+**Open.**
+- Real embedding model quality and a public retrieval benchmark.
+- An approximate vector index beyond about 10,000 chunks per query scope.
+- Cross-encoder reranking as a gateway task.
+- Web and enterprise connectors; OCR and multimodal retrieval.
 
 ## Persistence and deployment
 
@@ -166,5 +190,9 @@ See [testing.md](testing.md).
 | Artifact store for complete tool results | Accepted (M4) | ADR-0019 |
 | Memory model, lifecycle and scope | Accepted (M4) | ADR-0020 |
 | Memory storage (SQLite FTS5), retrieval and deletion semantics | Accepted (M4) | ADR-0021 |
-| Semantic retrieval, document knowledge retrieval | Open | M5 |
+| Embeddings as a gateway task; embedding spaces | Accepted (M5) | ADR-0022 |
+| Knowledge ingestion, structure, identifier-aware analysis | Accepted (M5) | ADR-0023 |
+| Knowledge storage, hybrid retrieval, access control in the store | Accepted (M5) | ADR-0024 |
+| RAG grounding, citations, trust, deletion | Accepted (M5) | ADR-0025 |
+| Approximate vector index, cross-encoder reranking, connectors, multimodal | Open | — |
 | Cloud deployment target | Open | Undecided |

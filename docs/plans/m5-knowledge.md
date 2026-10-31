@@ -87,3 +87,24 @@ Semantic (dense) quality is validated only through an opt-in live evaluation, wh
 ## Out of scope
 
 Web crawling and remote connectors (the source interface leaves room for them), OCR and multimodal, graph RAG, cross-encoder reranking as a gateway task (interface only), ANN indexes, and model-driven autonomous research loops.
+
+## Implementation notes (end of M5)
+
+Implemented as planned, with these findings and deviations:
+
+- **The evaluation changed the design.**
+  - Multi-hop stayed at 0.5 Recall@5 under every similarity configuration, simulated semantics included. A follow-up hop searches the words adjacent to query terms in the best first-hop chunk, and interleaves the results. It raised multi-hop to 1.0, so it's a default.
+  - Two earlier follow-up designs failed and are worth recording. Re-querying with the original terms was diluted by near-duplicate distractors. Adding results with a small score bonus never reached the top 5.
+- **Harness errors caught during evaluation:**
+  - CSV fact labels didn't match the rendered table text.
+  - The first corpus was too easy to show what dense retrieval adds, so hard negatives and a zero-overlap synonym query were added.
+  - The store re-analyzed terms, which would have made the M4-style ablation dishonest; the retriever now owns analysis.
+- **The held-out corpus proved easy.** Lexical retrieval alone reaches Recall@5 1.00 on it. It confirms no regression but doesn't separate hybrid configurations.
+- **M4's identifier gap is closed** by the shared analyzer: its strict `xfail` is now a regression test. The M4 held-out memory scenario now scores 100%, but it has informed a fix.
+- **Review fixes:**
+  - The formatter had turned escaped invisible characters into literal ones in the sanitizer source. It's now ASCII-only, with `\u` escapes.
+  - Grounding evidence was accepted from any tool; now only from trusted tools, since an external tool could forge evidence blocks (security test plus mutation check).
+  - One commit was amended before it was verified by the gate; nothing had been pushed.
+- **Mutation checks:** 18 knowledge protections were checked; 17 fail tests when removed. The remaining one (explicit fail-closed on an empty grant) is equivalent, because `IN ()` already matches nothing. Two weak tests found this way were strengthened: grant intersection, and exact-first, which is decisive only under weighted fusion.
+- **Dependency:** `pypdf` (optional extra `pdf`).
+- **Live verification:** nothing live ran. The opt-in live RAG evaluation can use a real embedding deployment and a real answering model.

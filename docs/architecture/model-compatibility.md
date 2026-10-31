@@ -47,6 +47,16 @@ Presets declare no `context_window_tokens`: windows depend on the model, not the
 | `anthropic-messages` | `count_tokens` (`TokenCounter` port), used near the budget limit | documented (offline mock-transport tests only) |
 | `openai-chat-completions` | none: no standard endpoint; heuristic estimate calibrated from reported usage | n/a |
 
+## Embeddings (`openai-embeddings`, M5)
+
+| Server | Status | Notes |
+|---|---|---|
+| OpenAI | documented | `dimensions` supported by `text-embedding-3-*` (set `send_dimensions`) |
+| Ollama | documented | `/v1/embeddings`; models such as `nomic-embed-text` expect `search_query: ` / `search_document: ` prefixes |
+| vLLM, llama.cpp, LM Studio, TEI, Infinity | documented | OpenAI-compatible embeddings endpoints; dimensions must be declared per deployment |
+
+Nothing is verified. The local `HashingEmbedder` needs no server. It captures surface similarity only.
+
 ## Recording a verification
 
 Run the live conformance suite (see `tests/conformance/test_conformance.py`) and add a row:

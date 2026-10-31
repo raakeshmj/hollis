@@ -60,6 +60,12 @@ Each property maps to a requirement and gets a test when its component exists. �
 | Updates supersede, corrections retract, conflicts never overwrite, temporary conditions expire; as-of queries see the past | FR-9 | ✅ M4 `tests/memory/test_lifecycle.py` |
 | Credentials are refused in memory and redacted from summaries and artifacts; recalled memories never authorize tools | NFR-4 | ✅ M4 |
 | Deleted memories are gone from the store, index and file bytes; run-log copies remain (honest deletion) | NFR-4 | ✅ M4 |
+| No retriever returns content outside the caller's collections or labels; requested collections are intersected with the grant | NFR-4, FR-15 | ✅ M5 `tests/security/test_knowledge_security.py` |
+| Re-ingesting unchanged content is a no-op; replacing or deleting a source leaves no stale chunks, index rows or vectors | FR-15 | ✅ M5 `tests/knowledge/test_lifecycle.py` |
+| Exact identifiers rank first despite fusion; embedding spaces are never mixed | FR-15, FR-16 | ✅ M5 |
+| Hidden or invisible document content never reaches the index; instruction-like chunks stay out of automatic context; documents cannot forge citations, identity or trust | NFR-4 | ✅ M5 |
+| Answers are checked against the run's actual evidence; fabricated citations are reported; external tools cannot supply evidence | FR-15 | ✅ M5 `tests/knowledge/test_rag_runtime.py` |
+| Retrieval quality compared across configurations on a development and a held-out corpus | FR-15 | ✅ M5 offline ([rag-evaluation](rag-evaluation.md)); live: not run |
 
 ## Future behavioral evaluations (once live access is available)
 
