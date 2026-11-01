@@ -103,7 +103,7 @@ def test_budgets_apply_to_subtrees_along_the_path_to_the_root() -> None:
         _row(root, None, 0, 100, budget=1000),
         _row(branch, root, 1, 100, budget=300),
         _row(leaf, branch, 2, 150),
-        _row(other, root, 1, 500),
+        _row(other, root, 1, 300),
     ]
     payload = created(
         lineage=Lineage(root_run_id=root, parent_run_id=branch, parent_invocation_id="i", depth=2),
@@ -115,8 +115,17 @@ def test_budgets_apply_to_subtrees_along_the_path_to_the_root() -> None:
     leaf_state = leaf_state.model_copy(
         update={"usage": leaf_state.usage.model_copy(update={"input_tokens": 200})}
     )
-    reason = budget_refusal(leaf_state, tree)
-    assert reason == "the token budget of 300 for this branch is used up (300 tokens)"
+    reason = budget_refusal(leaf_state, tree)  # the branch keeps 25% of its budget in reserve
+    assert reason is not None
+    assert reason.startswith("300 of the 300-token budget for this branch are used")
+    leaf_state = leaf_state.model_copy(
+        update={"usage": leaf_state.usage.model_copy(update={"input_tokens": 120})}
+    )
+    assert budget_refusal(leaf_state, tree) is None, "220 is below 75% of 300"
+    leaf_state = leaf_state.model_copy(
+        update={"usage": leaf_state.usage.model_copy(update={"input_tokens": 125})}
+    )
+    assert budget_refusal(leaf_state, tree) is not None, "225 reaches 75% of 300"
     tree[3]["data"]["usage"]["input_tokens"] = 650  # root subtree: 0 + 100 + 0 + 650
     root_state = fold(build_log(root, [created(delegation=DelegationLimits(token_budget=1000))]))
     assert budget_refusal(root_state, tree) is None

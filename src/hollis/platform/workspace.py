@@ -41,7 +41,7 @@ from hollis.platform.orchestration import DelegateTool, Orchestrator, delegation
 from hollis.platform.schemas import Agent
 from hollis.platform.supervisor import EventBus, RunSupervisor
 from hollis.runtime.embedding import EmbeddingProvider
-from hollis.runtime.events import EventEnvelope
+from hollis.runtime.events import EventEnvelope, ModelCallFailed, ModelResponseRecorded
 from hollis.runtime.model import ModelProvider
 from hollis.runtime.runner import Runner
 from hollis.runtime.state import RunState, fold
@@ -54,6 +54,7 @@ from hollis.tools.mcp_config import McpServerConfig
 log = logging.getLogger("hollis.platform")
 
 LOCAL_EMBEDDER = "local-hashing"
+_CALL_ENDED = (ModelResponseRecorded, ModelCallFailed)
 
 
 class PlatformResolver:
@@ -336,6 +337,9 @@ class Workspace:
 
     async def _observe(self, event: EventEnvelope, state: RunState) -> None:
         await self._index(event, state)
+        if isinstance(event.payload, _CALL_ENDED) or state.status.is_terminal:
+            # After indexing, so the call's usage counts before its reservation is released.
+            self.orchestrator.release(state.run_id)
         if state.status.is_terminal and event.sequence == state.version:
             await self._record_episode(state)
 

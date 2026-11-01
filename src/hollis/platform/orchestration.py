@@ -51,6 +51,7 @@ from hollis.platform.schemas import (
     RunSummary,
     VerificationView,
 )
+from hollis.runtime.context import estimate_text
 from hollis.runtime.delegation import (
     REPORT_KIND,
     Assignment,
@@ -97,8 +98,9 @@ EVIDENCE_BLOCKS = 6
 EVIDENCE_CHARS = 700
 MIN_ANSWER_CHARS = 400
 DELEGATION_SHARE = 0.75
-"""New delegations stop once a token budget is this much used, so the runs that delegated keep
-the rest to report what they have. Their own model calls stop at the full budget."""
+"""Work below a run may use this share of the run's token budget: new delegations stop, and
+delegated runs stop calling models, once the share is used. The rest is the delegating run's
+reserve to report what it has; its own model calls may use the full budget."""
 
 REPORT_PROTOCOL = """Report protocol (Hollis): another agent delegated this task to you. Work only \
 on the objective, with the tools and evidence you have. Cite evidence you rely on by its handle, \
@@ -531,11 +533,18 @@ def _tokens(row: Mapping[str, Any]) -> int:
 
 
 def budget_refusal(
-    state: RunState, tree: Sequence[Mapping[str, Any]], *, share: float = 1.0
+    state: RunState,
+    tree: Sequence[Mapping[str, Any]],
+    *,
+    share: float = 1.0,
+    reserved: Mapping[UUID, int] | None = None,
 ) -> str | None:
-    """The first token budget on the path from `state` to its root whose subtree has used
-    `share` of it, as a reason; None if every budget on the path has room."""
+    """The first token budget on the path from `state` to its root that is used up, as a
+    reason; None if every budget on the path has room. The run's own budget counts as used at
+    `share` of it; an ancestor's at DELEGATION_SHARE, keeping the ancestor's reserve."""
     usage = {row["run_id"]: _tokens(row) for row in tree}
+    for run, tokens in (reserved or {}).items():  # calls admitted and still in flight
+        usage[run] = usage.get(run, 0) + tokens
     parents: dict[UUID, UUID | None] = {row["run_id"]: row["parent_id"] for row in tree}
     budgets: dict[UUID, int | None] = {
         row["run_id"]: row["data"].get("token_budget") for row in tree
@@ -553,17 +562,30 @@ def budget_refusal(
     node: UUID | None = state.run_id
     while node is not None:
         budget = budgets.get(node)
-        if budget is not None and subtree.get(node, 0) >= budget * share:
+        limit = share if node == state.run_id else DELEGATION_SHARE
+        if budget is not None and subtree.get(node, 0) >= budget * limit:
             scope = "this orchestration" if parents.get(node) is None else "this branch"
-            used = f"({subtree[node]} tokens)"
-            if share < 1:
+            if limit < 1:
                 return (
-                    f"{subtree[node]} of the {budget}-token budget for {scope} are used; new "
-                    f"delegations stop at {share:.0%} so the rest is kept for reporting"
+                    f"{subtree[node]} of the {budget}-token budget for {scope} are used; "
+                    f"delegated work stops at {limit:.0%} so the rest is kept for reporting"
                 )
-            return f"the token budget of {budget} for {scope} is used up {used}"
+            return f"the token budget of {budget} for {scope} is used up ({subtree[node]} tokens)"
         node = parents.get(node)
     return None
+
+
+def _call_estimate(state: RunState) -> int:
+    """What a run's next model call may cost: its output budget (a hard limit) plus estimated
+    input: the previous call's recorded estimate and what was added since (its response and
+    tool results), or, before the first call, the run's input and instructions."""
+    last = state.turns[-1] if state.turns else None
+    if last is None or last.estimate is None:
+        estimated = estimate_text(state.input + (state.instructions or ""))
+    else:
+        added = last.response.content + "".join(render_parts(i.parts) for i in last.invocations)
+        estimated = last.estimate.input_tokens + estimate_text(added)
+    return estimated + state.budget.max_output_tokens
 
 
 def _progressed(ws: "Workspace", run_id: UUID, version: int, active: bool) -> Callable[[], bool]:
@@ -578,6 +600,7 @@ class Orchestrator:
     def __init__(self, workspace: "Workspace") -> None:
         self._ws = workspace
         self._locks: dict[UUID, asyncio.Lock] = {}
+        self._reserved: dict[UUID, tuple[UUID, int]] = {}
 
     def limits(self, agent: Agent | None) -> DelegationLimits:
         """Workspace limits narrowed by an agent's own."""
@@ -654,7 +677,8 @@ class Orchestrator:
         tree = await ws.db.index_tree(root_id)
         if len(tree) >= limits.max_runs:
             return f"the orchestration already has {len(tree)} runs (limit {limits.max_runs})"
-        exhausted = budget_refusal(parent, tree, share=DELEGATION_SHARE)
+        reserved = {r: t for r, (root, t) in self._reserved.items() if root == root_id}
+        exhausted = budget_refusal(parent, tree, share=DELEGATION_SHARE, reserved=reserved)
         if exhausted is not None:
             return exhausted
         resolved = self._inputs(parent, args.inputs)
@@ -830,11 +854,28 @@ class Orchestrator:
     # --- budgets (ModelCallGuard) ---------------------------------------------------------------
 
     async def refuse(self, state: RunState) -> str | None:
+        """Refuse a model call once a budget on the run's path is used up. An admitted call
+        reserves its output budget and estimated input until its outcome is recorded
+        (`release`), so calls made at the same time in one tree count each other; only input
+        estimation error can overshoot."""
         limits = state.delegation
         if limits is None or limits.token_budget is None:
             return None  # budgets are inherited, so no ancestor has one either
         root_id = state.lineage.root_run_id if state.lineage else state.run_id
-        return budget_refusal(state, await self._ws.db.index_tree(root_id))
+        tree = await self._ws.db.index_tree(root_id)
+        reserved = {
+            run: tokens
+            for run, (root, tokens) in self._reserved.items()
+            if root == root_id and run != state.run_id
+        }
+        reason = budget_refusal(state, tree, reserved=reserved)
+        if reason is None:  # no await between the check and the reservation
+            self._reserved[state.run_id] = (root_id, _call_estimate(state))
+        return reason
+
+    def release(self, run_id: UUID) -> None:
+        """The run's admitted call has a recorded outcome (or the run ended)."""
+        self._reserved.pop(run_id, None)
 
     # --- cancellation ---------------------------------------------------------------------------
 

@@ -267,7 +267,7 @@ async def test_a_token_budget_bounds_the_whole_tree(platform: Platform, admin: P
     assert done.children == 1
     tree = await platform.run_tree(admin, done.run_id)
     [refused] = tree.refusals
-    assert "new delegations stop at 75%" in refused.reason
+    assert "delegated work stops at 75%" in refused.reason
     assert tree.totals.input_tokens == 4000, "at most one call in flight overshoots the budget"
     detail = await platform.run(admin, done.run_id)
     assert detail.answer == "partial: 1 tasks done before the budget ran low"
@@ -571,3 +571,40 @@ async def test_unknown_runs_have_no_tree(platform: Platform, admin: Principal) -
 
     with pytest.raises(NotFound):
         await platform.run_tree(admin, uuid4())
+
+
+async def test_concurrent_children_cannot_spend_the_coordinators_reserve(
+    platform: Platform, admin: Principal
+) -> None:
+    """Four children call at once: each admitted call reserves its estimated input, so they
+    stop within the delegated share and the lead keeps enough budget to report."""
+
+    def lead(request: ModelRequest) -> ModelResponse:
+        if first_turn(request):
+            return calls(*(delegate("worker", f"task {i}", call_id=f"d{i}") for i in range(4)))
+        return answer(f"{sum('outcome completed' in r for r in tool_results(request))} done")
+
+    platform.ws.register_provider(ScriptedAgentModel("lead-model", lead, tokens=100))
+    platform.ws.register_provider(ScriptedAgentModel("slow", lambda r: answer("ok"), tokens=900))
+    await platform.create_agent(admin, AgentInput(name="worker", model="slow"))
+    await platform.create_agent(
+        admin,
+        AgentInput(
+            name="boss",
+            model="lead-model",
+            delegates=("worker",),
+            delegation=DelegationLimits(token_budget=2000),
+        ),
+    )
+    done = await run_lead(platform, admin, "go", agent="boss")
+    assert done.phase is RunPhase.COMPLETED, "the lead's reserve survived"
+    tree = await platform.run_tree(admin, done.run_id)
+    workers = [n for n in tree.nodes if n.run.depth == 1]
+    assert len(workers) + len(tree.refusals) == 4
+    stopped = [
+        n for n in workers if n.report is not None and n.report.outcome == "budget_exhausted"
+    ]
+    assert stopped or tree.refusals, "delegated work was stopped at its share"
+    work = sum(n.run.usage.input_tokens for n in workers)
+    assert work <= 0.75 * 2000 + 900, "children overshoot their share by at most one call"
+    assert platform.ws.orchestrator._reserved == {}, "every reservation was released"  # pyright: ignore[reportPrivateUsage]
