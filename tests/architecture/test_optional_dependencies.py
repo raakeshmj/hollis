@@ -23,8 +23,22 @@ CORE_MODULES = [
     "hollis.runtime.text",
     "hollis.knowledge.ingest",
     "hollis.adapters.sqlite_knowledge",
+    "hollis.adapters.demo_model",
+    "hollis.platform.config",
+    "hollis.platform.auth",
+    "hollis.platform.services",
+    "hollis.platform.workspace",
 ]
-OPTIONAL = ("anthropic", "httpx2", "opentelemetry", "mcp", "pypdf")
+OPTIONAL = (
+    "anthropic",
+    "httpx2",
+    "opentelemetry",
+    "mcp",
+    "pypdf",
+    "fastapi",
+    "starlette",
+    "uvicorn",
+)
 
 
 def _loaded_after(code: str) -> set[str]:

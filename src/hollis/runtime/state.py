@@ -275,6 +275,10 @@ class RunState(_Frozen):
 
     @property
     def awaiting_approval(self) -> tuple[Invocation, ...]:
+        """Invocations waiting for a decision. A finished run (for example one cancelled while
+        waiting) waits for nothing."""
+        if self.status.is_terminal:
+            return ()
         return tuple(i for i in self.pending_invocations if i.awaiting_approval)
 
 

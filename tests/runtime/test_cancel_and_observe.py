@@ -9,10 +9,10 @@ import pytest
 from hollis.adapters.fake_provider import ScriptedModelProvider
 from hollis.runtime.events import EventEnvelope, EventType, RunCancelled
 from hollis.runtime.policy import RunBudget
-from hollis.runtime.runner import Runner, RunSpec
+from hollis.runtime.runner import ApprovalMismatch, Runner, RunSpec
 from hollis.runtime.state import InvalidEventSequence, RunState, RunStatus, fold
 from hollis.runtime.store import RunStore
-from hollis.runtime.tools import ToolEffect, ToolOutput
+from hollis.runtime.tools import ApprovalDecision, ToolEffect, ToolOutput
 from tests.support.events import build_log, created
 from tests.support.tools import Catalog, FakeTool, answer, call, wants
 
@@ -33,6 +33,7 @@ async def test_cancelling_a_run_waiting_for_approval(store: RunStore) -> None:
     )
     waiting = await runner.execute(run.run_id)
     assert waiting.awaiting_approval
+    [request] = await runner.pending_approvals(run.run_id)
 
     cancelled = await runner.cancel(run.run_id, by="alice", reason="wrong environment")
     assert cancelled.status is RunStatus.CANCELLED
@@ -42,6 +43,12 @@ async def test_cancelling_a_run_waiting_for_approval(store: RunStore) -> None:
         "wrong environment",
     )
     assert cancelled.cancellation.interrupted == ()
+    assert cancelled.awaiting_approval == ()
+    assert await runner.pending_approvals(run.run_id) == []
+    with pytest.raises(ApprovalMismatch):  # a cancelled run cannot be approved into running
+        await runner.resolve_approval(
+            run.run_id, ApprovalDecision(binding=request.binding, approved=True, approver="bob")
+        )
     assert tool.calls == []
     again = await runner.cancel(run.run_id, by="bob")  # terminal: unchanged
     assert again.version == cancelled.version
