@@ -244,6 +244,12 @@ async def login(spec: LoginInput, request: Request, response: Response, platform
     return Session(principal=principal.view(), expires_at=expires)
 
 
+@api.post("/session/link", tags=["identity"])
+async def login_link(platform: Plat, caller: Caller) -> dict[str, str]:
+    """A single-use, ten-minute sign-in token for yourself: open `/login#token=<token>`."""
+    return {"token": await platform.login_link_token(caller)}
+
+
 @api.get("/session", tags=["identity"])
 async def current_session(request: Request, caller: Caller, platform: Plat) -> Session:
     expires = None
@@ -395,6 +401,12 @@ async def agents(platform: Plat, caller: Caller) -> list[Agent]:
 @api.post("/agents", tags=["agents"], status_code=201)
 async def create_agent(spec: AgentInput, platform: Plat, caller: Caller) -> Agent:
     return await platform.create_agent(caller, spec)
+
+
+@api.post("/agents/starter", tags=["agents"])
+async def create_starter(platform: Plat, caller: Caller) -> Agent:
+    """Create the starter `docs` collection and default agent (admin; idempotent)."""
+    return await platform.create_starter(caller)
 
 
 @api.get("/agents/{name}", tags=["agents"])
@@ -780,6 +792,7 @@ def create_app(
     platform: Platform | None = None,
     root: Path | None = None,
     on_ready: OnReady | None = None,
+    on_stop: OnReady | None = None,
     hosts: frozenset[str] | None = frozenset(LOOPBACK_HOSTS),
 ) -> FastAPI:
     """The ASGI application. Give an open `platform` (its lifetime stays the caller's), or a
@@ -803,8 +816,12 @@ def create_app(
             yield
         finally:
             app.state.platform = None
-            if owned:
-                await opened.close()
+            try:
+                if on_stop is not None:
+                    await on_stop(opened)
+            finally:
+                if owned:
+                    await opened.close()
 
     app = FastAPI(
         title="Hollis API",
@@ -818,7 +835,7 @@ def create_app(
     if platform is not None:
         app.state.platform = platform
     app.include_router(api)
-    app.add_api_route("/{path:path}", _spa, methods=["GET"], include_in_schema=False)
+    app.add_api_route("/{path:path}", _spa, methods=["GET", "HEAD"], include_in_schema=False)
     app.add_exception_handler(PlatformError, _platform_error)
     app.add_exception_handler(RequestValidationError, _validation_error)
     app.add_exception_handler(StarletteHTTPException, _http_error)

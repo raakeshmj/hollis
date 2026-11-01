@@ -271,6 +271,7 @@ name = "hollis"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "click" },
     { name = "pydantic" },
 ]
 
@@ -292,6 +293,7 @@ pdf = [
 ]
 server = [
     { name = "fastapi" },
+    { name = "httpx2" },
     { name = "uvicorn" },
 ]
 
@@ -309,9 +311,11 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=2.3,<3" },
+    { name = "click", specifier = ">=8.2,<9" },
     { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.162,<1" },
     { name = "httpx2", marker = "extra == 'client'", specifier = ">=2.16,<3" },
     { name = "httpx2", marker = "extra == 'openai-compatible'", specifier = ">=2.16,<3" },
+    { name = "httpx2", marker = "extra == 'server'", specifier = ">=2.16,<3" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=2.3,<3" },
     { name = "pydantic", specifier = ">=2.14,<3" },
     { name = "pypdf", marker = "extra == 'pdf'", specifier = ">=5,<7" },

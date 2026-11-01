@@ -60,12 +60,17 @@ class ServerConfig(_Model):
     session_hours: float = Field(default=12.0, gt=0, le=24 * 30)
     run_visibility: Literal["owner", "workspace"] = "owner"
     """Who can see a run: its creator and admins ("owner"), or every principal ("workspace")."""
+    allowed_hosts: tuple[str, ...] = ()
+    """Host names accepted besides loopback and the bind address (e.g. behind a proxy). "*"
+    accepts any Host header; use it only when a proxy in front validates it."""
 
 
 class RuntimeConfig(_Model):
     environment: str = Field(default="local", min_length=1, max_length=40)
     max_output_tokens: int = Field(default=1024, ge=1)
     """Default output budget for agents that do not set one."""
+    default_agent: str | None = None
+    """The agent a run uses when the request names neither an agent nor a model."""
 
 
 class FilesystemTools(_Model):
@@ -174,6 +179,7 @@ port = 7878
 
 [runtime]
 environment = "local"
+default_agent = "assistant"   # `hollis init` creates it, on the demo model
 
 # The built-in demo model (deployment "demo") is deterministic rules, not a language model.
 # Add real deployments with `hollis models add` or the web app, for example:

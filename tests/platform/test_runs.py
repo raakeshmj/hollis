@@ -57,9 +57,23 @@ async def test_unknown_runs_agents_and_models_are_reported(
         await platform.start_run(admin, StartRun(input="x", model="no-such-model"))
     with pytest.raises(InvalidRequest):
         await platform.start_run(admin, StartRun(input="x", model="demo", tools=("no_such_tool",)))
-    with pytest.raises(InvalidRequest):
+    with pytest.raises(NotFound):  # the configured default agent does not exist yet
         await platform.start_run(admin, StartRun(input="x"))
     assert (await platform.runs(admin)).total == 0, "nothing is persisted for rejected runs"
+
+
+async def test_runs_without_an_agent_use_the_default_agent(
+    platform: Platform, admin: Principal
+) -> None:
+    starter = await platform.create_starter(admin)
+    assert starter.name == platform.ws.config.runtime.default_agent == "assistant"
+    assert await platform.create_starter(admin) == starter, "idempotent"
+    done = await platform.wait_run(
+        admin, (await platform.start_run(admin, StartRun(input="list files"))).run_id, timeout_s=10
+    )
+    assert done.agent == "assistant"
+    assert done.phase is RunPhase.COMPLETED
+    assert [c.name for c in await platform.collections(admin)] == ["docs"]
 
 
 async def test_a_run_interrupted_by_a_restart_is_recovered(

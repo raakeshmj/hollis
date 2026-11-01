@@ -28,6 +28,8 @@ CORE_MODULES = [
     "hollis.platform.auth",
     "hollis.platform.services",
     "hollis.platform.workspace",
+    "hollis.sdk",
+    "hollis.cli",
 ]
 OPTIONAL = (
     "anthropic",

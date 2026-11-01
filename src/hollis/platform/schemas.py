@@ -24,6 +24,15 @@ NAME_PATTERN = r"^[a-z0-9][a-z0-9-]{0,62}$"
 
 
 class _View(BaseModel):
+    """A response. Unknown fields are ignored so older clients keep working when a newer server
+    adds fields (nested runtime models are still strict: keep SDK and server versions close)."""
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+
+class _Input(BaseModel):
+    """A request. Unknown fields are rejected."""
+
     model_config = ConfigDict(frozen=True, extra="forbid")
 
 
@@ -49,7 +58,7 @@ class PrincipalView(_View):
     created_at: AwareDatetime
 
 
-class PrincipalInput(_View):
+class PrincipalInput(_Input):
     name: str = Field(pattern=NAME_PATTERN)
     role: Role = Role.OPERATOR
     can_approve: bool = False
@@ -71,7 +80,7 @@ class CreatedToken(TokenView):
     """Shown once; only its hash is stored."""
 
 
-class TokenInput(_View):
+class TokenInput(_Input):
     principal: str
     label: str = Field(default="", max_length=80)
     expires_in_days: float | None = Field(default=None, gt=0, le=3650)
@@ -83,7 +92,7 @@ class Session(_View):
     """None when the caller authenticated with an API token rather than a browser session."""
 
 
-class LoginInput(_View):
+class LoginInput(_Input):
     token: str = Field(min_length=8, max_length=200)
     """An API token or a single-use login token (from `hollis serve` or `hollis token login`)."""
 
@@ -148,7 +157,7 @@ class DeploymentView(_View):
     description: str = ""
 
 
-class DeploymentInput(_View):
+class DeploymentInput(_Input):
     """A gateway catalog entry (same schema as `[[deployments]]` in hollis.toml)."""
 
     deployment: dict[str, JsonValue]
@@ -212,7 +221,7 @@ class ToolActivity(_View):
 # --- agents ---------------------------------------------------------------------------------------
 
 
-class AgentInput(_View):
+class AgentInput(_Input):
     name: str = Field(pattern=NAME_PATTERN)
     description: str = Field(default="", max_length=500)
     instructions: str = Field(default="", max_length=50_000)
@@ -227,6 +236,8 @@ class AgentInput(_View):
 
 
 class Agent(AgentInput):
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
     created_at: AwareDatetime
     updated_at: AwareDatetime
     created_by: str
@@ -236,7 +247,7 @@ class Agent(AgentInput):
 # --- runs -----------------------------------------------------------------------------------------
 
 
-class StartRun(_View):
+class StartRun(_Input):
     input: str = Field(min_length=1, max_length=200_000)
     agent: str | None = None
     model: str | None = None
@@ -432,12 +443,12 @@ class Approval(_View):
     run_input: str
 
 
-class ApprovalDecisionInput(_View):
+class ApprovalDecisionInput(_Input):
     approved: bool
     reason: str | None = Field(default=None, max_length=2000)
 
 
-class CancelInput(_View):
+class CancelInput(_Input):
     reason: str = Field(default="", max_length=2000)
 
 
@@ -469,7 +480,7 @@ class CollectionView(_View):
     created_at: AwareDatetime
 
 
-class CollectionInput(_View):
+class CollectionInput(_Input):
     name: str = Field(pattern=r"^[a-z0-9][a-z0-9._-]{0,63}$")
     description: str = Field(default="", max_length=500)
     embedded: bool = True
@@ -522,7 +533,7 @@ class IngestResultView(_View):
     reason: str = ""
 
 
-class SyncInput(_View):
+class SyncInput(_Input):
     path: str
     labels: tuple[str, ...] = ()
     trust: SourceTrust = SourceTrust.INTERNAL
@@ -536,11 +547,11 @@ class SyncResultView(_View):
     rejected: tuple[tuple[str, str], ...]
 
 
-class LabelsInput(_View):
+class LabelsInput(_Input):
     labels: tuple[str, ...]
 
 
-class SearchInput(_View):
+class SearchInput(_Input):
     query: str = Field(min_length=1, max_length=2000)
     collections: tuple[str, ...] = ()
     limit: int = Field(default=8, ge=1, le=50)
@@ -597,7 +608,7 @@ class MemoryDetail(_View):
     history: tuple[MemoryChangeView, ...]
 
 
-class RememberInput(_View):
+class RememberInput(_Input):
     scope: str
     content: str = Field(min_length=1, max_length=4000)
     kind: MemoryKind = MemoryKind.FACT
@@ -614,7 +625,7 @@ class WriteResultView(_View):
     reason: str = ""
 
 
-class ForgetInput(_View):
+class ForgetInput(_Input):
     reason: str = Field(min_length=1, max_length=500)
 
 

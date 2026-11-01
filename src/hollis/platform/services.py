@@ -100,6 +100,23 @@ from hollis.runtime.state import fold
 from hollis.runtime.store import load_run
 from hollis.runtime.tools import ApprovalDecision, PolicyRequest
 
+STARTER_AGENT = "assistant"
+STARTER_COLLECTION = "docs"
+STARTER_SCOPE = "workspace:main"
+STARTER_TOOLS = (
+    "fs_list_dir",
+    "fs_read_file",
+    "fs_write_file",
+    "knowledge_search",
+    "knowledge_read",
+    "memory_recall",
+    "memory_remember",
+)
+STARTER_INSTRUCTIONS = (
+    "You are a careful assistant for this workspace. Use tools when they help, cite knowledge "
+    "passages by their keys, and say when you are unsure."
+)
+
 
 class Platform:
     def __init__(self, workspace: Workspace) -> None:
@@ -158,6 +175,12 @@ class Platform:
         """A single-use, ten-minute token for the web app's login link (`hollis serve`)."""
         await self.ws.auth.ensure_admin()
         return (await self.ws.auth.create_token(principal, label="login link", kind="login")).token
+
+    async def login_link_token(self, p: Principal) -> str:
+        """A single-use, ten-minute sign-in token for the caller (to open the web app)."""
+        token = await self.ws.auth.create_token(p.name, label="login link", kind="login")
+        await self.ws.db.audit(p.name, "token.login_link", token.token_id)
+        return token.token
 
     async def audit(self, p: Principal, limit: int = 100) -> list[dict[str, str]]:
         _admin(p)
@@ -539,6 +562,31 @@ class Platform:
             raise NotFound(f"no agent {name!r}")
         await self.ws.db.audit(p.name, "agent.delete", name)
 
+    async def create_starter(self, p: Principal) -> Agent:
+        """The starter setup `hollis init` offers: a `docs` collection and an `assistant` agent
+        on the default (demo) model with the built-in tools this workspace has. Idempotent."""
+        _admin(p)
+        if await self.ws.knowledge_store.collection(STARTER_COLLECTION) is None:
+            await self.create_collection(
+                p, CollectionInput(name=STARTER_COLLECTION, description="Workspace documents")
+            )
+        name = self.ws.config.runtime.default_agent or STARTER_AGENT
+        if await self.ws.db.query("SELECT 1 FROM agents WHERE name = ?", (name,)):
+            return await self.agent(p, name)
+        tools = tuple(t for t in STARTER_TOOLS if self.ws.registry.get(t) is not None)
+        return await self.create_agent(
+            p,
+            AgentInput(
+                name=name,
+                description="Starter agent. Point it at a real model once you add a deployment.",
+                instructions=STARTER_INSTRUCTIONS,
+                model=DEMO_DEPLOYMENT if self.ws.resolver.demo is not None else "",
+                tools=tools,
+                memory=MemoryAccess(read=(STARTER_SCOPE,), write=(STARTER_SCOPE,)),
+                knowledge=KnowledgeAccess(collections=(STARTER_COLLECTION,)),
+            ),
+        )
+
     async def _validate_agent(self, spec: AgentInput) -> None:
         self._check_model(spec.model)
         unknown = [
@@ -577,6 +625,9 @@ class Platform:
         runs (a model, tools and instructions given directly) are for admins."""
         _operator(p)
         record_episodes = False
+        default = self.ws.config.runtime.default_agent
+        if spec.agent is None and spec.model is None and default is not None:
+            spec = spec.model_copy(update={"agent": default})
         if spec.agent is not None:
             if spec.model is not None or spec.tools or spec.instructions is not None:
                 raise InvalidRequest("give an agent, or a model with tools and instructions")
@@ -593,7 +644,7 @@ class Platform:
             budget = RunBudget(max_output_tokens=self.ws.config.runtime.max_output_tokens)
             context, memory, knowledge = ContextPolicy(), None, None
         else:
-            raise InvalidRequest("give an agent or a model")
+            raise InvalidRequest("give an agent or a model (no default agent is configured)")
         memory = _effective_memory(memory, p)
         if spec.session is not None:  # a conversation scope private to this principal
             scope = f"session:{p.name}/{spec.session}"
