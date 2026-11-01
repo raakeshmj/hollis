@@ -155,6 +155,9 @@ async def test_browser_sessions_use_strict_cookies_and_refuse_cross_origin_chang
     assert (await anonymous.post("/v1/runs", json=run, headers=same)).status_code == 202
 
     _problem(await anonymous.post("/v1/session", json={"token": login}), 401, "unauthenticated")
+    fresh = await platform.login_token()
+    cross_site = await anonymous.post("/v1/session", json={"token": fresh}, headers=evil)
+    _problem(cross_site, 403, "forbidden")  # another site cannot sign this browser in
     assert (await anonymous.delete("/v1/session", headers=same)).status_code == 204
     _problem(await anonymous.get("/v1/me"), 401, "unauthenticated")
 

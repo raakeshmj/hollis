@@ -229,6 +229,8 @@ async def ping() -> dict[str, str]:
 @api.post("/session", tags=["identity"])
 async def login(spec: LoginInput, request: Request, response: Response, platform: Plat) -> Session:
     """Exchange an API token or a single-use login token for a browser session cookie."""
+    if request.headers.get("origin") is not None:
+        _require_same_origin(request)  # no other site may sign a browser in (login CSRF)
     hours = platform.ws.config.server.session_hours
     session, expires, principal = await platform.ws.auth.open_session(spec.token, hours=hours)
     response.set_cookie(

@@ -2,7 +2,7 @@ import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { admin, renderAt, stubApi } from "../test/render";
-import { Login } from "./Login";
+import { Login, safeNext } from "./Login";
 
 const unauthenticated: [number, unknown] = [401, { code: "unauthenticated", detail: "authentication required" }];
 
@@ -28,5 +28,14 @@ describe("Login", () => {
     await userEvent.type(await screen.findByLabelText("API token"), "hx_not-a-real-token");
     await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
     expect(await screen.findByText(/That token is not valid/)).toBeInTheDocument();
+  });
+});
+
+describe("safeNext", () => {
+  it("keeps paths on this site and refuses everything else", () => {
+    expect(safeNext("/runs/abc?x=1")).toBe("/runs/abc?x=1");
+    for (const hostile of ["//evil.example", "/\\evil.example", "https://evil.example", "runs", null]) {
+      expect(safeNext(hostile)).toBe("/");
+    }
   });
 });

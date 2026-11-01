@@ -5,9 +5,10 @@ import { useSession, useSignIn } from "../api/hooks";
 import { Lockup } from "../components/Mark";
 import { Field, Loading } from "../components/ui";
 
-/** Only same-site paths are accepted as a destination after signing in. */
-function safeNext(value: string | null): string {
-  return value && value.startsWith("/") && !value.startsWith("//") ? value : "/";
+/** Only paths on this site are accepted as a destination after signing in: not `//host` or
+ * `/\host`, which browsers read as another site. */
+export function safeNext(value: string | null): string {
+  return value && /^\/(?![/\\])/.test(value) ? value : "/";
 }
 
 export function Login() {
