@@ -608,3 +608,56 @@ async def test_concurrent_children_cannot_spend_the_coordinators_reserve(
     work = sum(n.run.usage.input_tokens for n in workers)
     assert work <= 0.75 * 2000 + 900, "children overshoot their share by at most one call"
     assert platform.ws.orchestrator._reserved == {}, "every reservation was released"  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_recovery_cancels_orphans_instead_of_resuming_them(
+    tmp_path: Path, platform: Platform, admin: Principal
+) -> None:
+    """The process stopped after the parent was cancelled but before its child was."""
+    await add_team(platform, admin)
+    waiting = await run_lead(platform, admin, "@writer write a.txt: x")
+    [delegation] = await platform.approvals(admin)
+    await platform.decide(
+        admin, waiting.run_id, delegation.invocation_id, ApprovalDecisionInput(approved=True)
+    )
+    child_id = child_run_id(waiting.run_id, delegation.invocation_id)
+    await asyncio.wait_for(_pending_approval(platform, admin), timeout=10)
+    await platform.ws.supervisor.cancel(waiting.run_id, by="admin", reason="stop")  # no cascade
+    await platform.close()
+
+    from hollis.platform.services import Platform as Reopened
+
+    reopened = await Reopened.open(tmp_path)
+    try:
+        assert child_id not in await reopened.ws.recover()
+        child = await reopened.run(admin, child_id)
+        assert child.summary.phase is RunPhase.CANCELLED
+        assert child.cancellation is not None
+        assert "had already finished" in child.cancellation.reason
+        assert await reopened.approvals(admin) == []
+    finally:
+        await reopened.close()
+
+
+async def test_an_execution_error_releases_the_runs_budget_reservation(
+    platform: Platform, admin: Principal
+) -> None:
+    async def crashes(request: ModelRequest) -> ModelResponse:
+        raise RuntimeError("a bug in a provider")  # not a classified ModelCallError
+
+    platform.ws.register_provider(ScriptedAgentModel("buggy", crashes))
+    await platform.create_agent(admin, AgentInput(name="worker", model="demo"))
+    await platform.create_agent(
+        admin,
+        AgentInput(
+            name="boss",
+            model="buggy",
+            delegates=("worker",),
+            delegation=DelegationLimits(token_budget=5000),
+        ),
+    )
+    stopped = await run_lead(platform, admin, "go", agent="boss")
+    assert stopped.phase is RunPhase.INTERRUPTED
+    assert stopped.error is not None
+    assert "a bug in a provider" in stopped.error
+    assert platform.ws.orchestrator._reserved == {}  # pyright: ignore[reportPrivateUsage]

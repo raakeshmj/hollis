@@ -55,6 +55,7 @@ log = logging.getLogger("hollis.platform")
 
 LOCAL_EMBEDDER = "local-hashing"
 _CALL_ENDED = (ModelResponseRecorded, ModelCallFailed)
+_TERMINAL = ("completed", "failed", "cancelled")
 
 
 class PlatformResolver:
@@ -391,6 +392,7 @@ class Workspace:
 
     async def _record_error(self, run_id: UUID, message: str) -> None:
         """An execution pass stopped with an unexpected error: the run stays resumable."""
+        self.orchestrator.release(run_id)  # its admitted model call, if any, is not in flight
         await self.db.index_patch(run_id, {"stopped": self.redactor.redact(message)})
 
     async def sync_index(self, *, rebuild: bool = False) -> int:
@@ -412,13 +414,25 @@ class Workspace:
             offset += len(listings)
 
     async def recover(self) -> list[UUID]:
-        """Resume runs that were interrupted (not waiting for approval, not terminal)."""
+        """Resume runs that were interrupted (not waiting for approval, not terminal).
+
+        A delegated run whose parent already finished is an orphan (the process stopped while
+        a cancellation was cascading): it is cancelled, never resumed, so no child outlives
+        the run that delegated it."""
         await self.sync_index()
         rows, _ = await self.db.index_list(owner=None, limit=10_000)
+        status = {row["run_id"]: row["status"] for row in rows}
         resumed: list[UUID] = []
-        for row in rows:
-            status, awaiting = row["status"], row["awaiting"]
-            if status in ("completed", "failed", "cancelled") or awaiting:
+        for row in sorted(rows, key=lambda r: r["depth"]):
+            if status[row["run_id"]] in _TERMINAL:
+                continue
+            parent = row["parent_id"]
+            if parent is not None and status.get(parent) in _TERMINAL:
+                reason = f"run {parent} that delegated it had already finished"
+                state = await self.runner.cancel(row["run_id"], by="hollis", reason=reason)
+                status[row["run_id"]] = state.status.value  # its own children cancel in turn
+                continue
+            if row["awaiting"]:
                 continue
             if self.supervisor.schedule(row["run_id"]):
                 resumed.append(row["run_id"])
