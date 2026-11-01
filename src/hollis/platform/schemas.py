@@ -79,7 +79,13 @@ class TokenInput(_View):
 
 class Session(_View):
     principal: PrincipalView
-    expires_at: AwareDatetime
+    expires_at: AwareDatetime | None = None
+    """None when the caller authenticated with an API token rather than a browser session."""
+
+
+class LoginInput(_View):
+    token: str = Field(min_length=8, max_length=200)
+    """An API token or a single-use login token (from `hollis serve` or `hollis token login`)."""
 
 
 # --- health and settings -------------------------------------------------------------------------

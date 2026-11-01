@@ -1,7 +1,7 @@
 """Platform errors. Every interface maps them the same way (HTTP status, CLI exit code, SDK type).
 
 The REST API renders them as RFC 9457 problem details:
-`{"type": "https://hollis.dev/problems/<code>", "title", "status", "detail", "code"}`.
+`{"type": "urn:hollis:problem:<code>", "title", "status", "detail", "code"}`.
 """
 
 

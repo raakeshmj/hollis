@@ -7,6 +7,15 @@ resolution-markers = [
 ]
 
 [[package]]
+name = "annotated-doc"
+version = "0.0.5"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/5a/8e/38aa427ed5402449e226975b649c5dc73ccadfefeb95e6aecb8f8ea4b6b6/annotated_doc-0.0.5.tar.gz", hash = "sha256:c7e58ce09192557605d8bbd92836d7e1d520ac9580096042c0bfd197efacf1bb", size = 10758, upload-time = "2026-07-28T13:50:58.129Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3e/30/e900b21425a860e195f32e37657aa1f7c7f2b1bfb26f03ca209b90933c06/annotated_doc-0.0.5-py3-none-any.whl", hash = "sha256:117bac03a25ede5df5440e855b32d556049ca169ead221505badf432fed4b101", size = 5302, upload-time = "2026-07-28T13:50:57.239Z" },
+]
+
+[[package]]
 name = "annotated-types"
 version = "0.8.0"
 source = { registry = "https://pypi.org/simple" }
@@ -232,6 +241,23 @@ wheels = [
 ]
 
 [[package]]
+name = "fastapi"
+version = "0.162.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "annotated-doc" },
+    { name = "opentelemetry-api" },
+    { name = "pydantic" },
+    { name = "starlette" },
+    { name = "typing-extensions" },
+    { name = "typing-inspection" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e9/eb/2cf8c80abf09b2800aef0a83b41066fbfda8ee5495b7a08b9d1af40f7046/fastapi-0.162.0.tar.gz", hash = "sha256:6a22c1e2e6e32e0633ee7e170f00009a29b8228b16feb219ee42f32fd8d88a8f", size = 527867, upload-time = "2026-10-23T18:47:33.264Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b4/4f/3f2c25c9b43970b5e9a08beb5e04776247edea684ddc0930f4f02f0bb6cb/fastapi-0.162.0-py3-none-any.whl", hash = "sha256:3785963de305dd09912426cb81f2d230fce98ab3521cdfe97265c8d14983128c", size = 148912, upload-time = "2026-10-23T18:47:31.734Z" },
+]
+
+[[package]]
 name = "h11"
 version = "0.16.0"
 source = { registry = "https://pypi.org/simple" }
@@ -252,6 +278,9 @@ dependencies = [
 anthropic = [
     { name = "anthropic" },
 ]
+client = [
+    { name = "httpx2" },
+]
 mcp = [
     { name = "mcp" },
 ]
@@ -261,10 +290,14 @@ openai-compatible = [
 pdf = [
     { name = "pypdf" },
 ]
+server = [
+    { name = "fastapi" },
+    { name = "uvicorn" },
+]
 
 [package.dev-dependencies]
 dev = [
-    { name = "hollis", extra = ["anthropic", "mcp", "openai-compatible", "pdf"] },
+    { name = "hollis", extra = ["anthropic", "client", "mcp", "openai-compatible", "pdf", "server"] },
     { name = "hypothesis" },
     { name = "pyright" },
     { name = "pytest" },
@@ -276,16 +309,19 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=2.3,<3" },
+    { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.162,<1" },
+    { name = "httpx2", marker = "extra == 'client'", specifier = ">=2.16,<3" },
     { name = "httpx2", marker = "extra == 'openai-compatible'", specifier = ">=2.16,<3" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=2.3,<3" },
     { name = "pydantic", specifier = ">=2.14,<3" },
     { name = "pypdf", marker = "extra == 'pdf'", specifier = ">=5,<7" },
+    { name = "uvicorn", marker = "extra == 'server'", specifier = ">=0.54,<1" },
 ]
-provides-extras = ["anthropic", "openai-compatible", "mcp", "pdf"]
+provides-extras = ["anthropic", "openai-compatible", "mcp", "pdf", "server", "client"]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "hollis", extras = ["anthropic", "openai-compatible", "mcp", "pdf"] },
+    { name = "hollis", extras = ["anthropic", "openai-compatible", "mcp", "pdf", "server", "client"] },
     { name = "hypothesis", specifier = ">=6.170.14" },
     { name = "pyright", specifier = ">=1.1.414" },
     { name = "pytest", specifier = ">=9.2.0" },
