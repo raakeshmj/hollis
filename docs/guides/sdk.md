@@ -50,10 +50,10 @@ asyncio.run(main())
 
 | Namespace | Operations |
 |---|---|
-| `runs` | `start(input, agent=…, session=…)`, `get(id)`, `list(phase=…, agent=…)` |
-| run handle | `wait`, `refresh`, `detail`, `answer`, `events`, `stream`, `approvals`, `approve`, `deny`, `cancel`, `resume`, `artifact` |
+| `runs` | `start(input, agent=…, session=…)` or `start(input, plan=Plan(...))`, `get(id)`, `list(phase=…, agent=…, roots=…)` |
+| run handle | `wait`, `refresh`, `detail`, `answer`, `events`, `stream`, `approvals`, `approve`, `deny`, `cancel`, `resume`, `artifact`, `tree` (the orchestration it belongs to) |
 | `approvals` | `list`, `approve(approval)`, `deny(approval)` |
-| `agents` | `list`, `get`, `create(name=…, model=…, tools=…)`, `update(name, **changes)`, `delete`, `starter` |
+| `agents` | `list`, `get`, `create(name=…, model=…, tools=…, delegates=…)`, `update(name, **changes)`, `delete`, `starter` |
 | `models` | `list`, `get`, `put(definition)`, `delete`, `probe` (a real request) |
 | `tools` | `list` (with the policy's decision), `activity`, `mcp_servers`, `connect_mcp` |
 | `knowledge` | `collections`, `create_collection`, `delete_collection`, `sources`, `source`, `ingest`, `ingest_file`, `delete`, `relabel`, `sync`, `search`, `reconcile` |
@@ -62,6 +62,8 @@ asyncio.run(main())
 | client | `health`, `settings`, `update_config`, `whoami`, `audit`, `login_token` |
 
 Sessions: runs started with the same `session="…"` share a private memory scope, `session:<you>/<name>`.
+
+Agents that delegate, plans (`from hollis import Plan, PlanStep`) and the orchestration view are described in [orchestration](orchestration.md).
 
 ## Errors
 

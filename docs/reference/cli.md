@@ -47,8 +47,9 @@ With `--json`, errors print `{"error": {"code": …, "detail": …, "status": �
 
 | Command | |
 |---|---|
-| `run TASK… [-a AGENT] [-s SESSION] [--approve ask\|deny\|stop] [--detach] [--timeout] [-v]` | Start a run and follow it live. `--approve ask` (default) asks at a terminal; `deny` denies held calls; `stop` leaves the run waiting. `--detach` returns at once (needs a server: an embedded run stops when the command exits). Admins can run a model directly: `--model ID --tool NAME… --instructions TEXT\|@file` |
-| `runs list [--phase] [--agent] [--limit]` | Recent runs |
+| `run TASK… [-a AGENT] [-s SESSION] [--approve ask\|deny\|stop] [--detach] [--timeout] [-v]` | Start a run and follow it live. `--approve ask` (default) asks at a terminal; `deny` denies held calls; `stop` leaves the run waiting. `--detach` returns at once (needs a server: an embedded run stops when the command exits). Admins can run a model directly: `--model ID --tool NAME… --instructions TEXT\|@file`. `--plan FILE` runs a fixed plan of delegations (TOML `[[steps]]` or JSON) |
+| `runs list [--phase] [--agent] [--roots] [--limit]` | Recent runs, delegated runs indented; `--roots` leaves them out |
+| `runs tree RUN` | The orchestration a run belongs to: who delegated what, outcomes, citation checks, usage, refusals, disagreements |
 | `runs show RUN` | Turns, tool calls, decisions, the answer. `RUN` may be a unique id prefix |
 | `runs events RUN [--after N]` | The event log |
 | `runs follow RUN [--approve …]` | Follow live (JSON Lines with `--json`) |
@@ -65,7 +66,7 @@ With `--json`, errors print `{"error": {"code": …, "detail": …, "status": �
 | Command | |
 |---|---|
 | `agents list` · `show NAME` · `delete NAME [--yes]` | |
-| `agents create NAME -m MODEL [--tool T]… [--memory SCOPE]… [--memory-read SCOPE]… [--collection C]… [--label L]… [--instructions TEXT\|@file] [--description] [--max-output-tokens N] [--record-episodes]` | Admin |
+| `agents create NAME -m MODEL [--tool T]… [--memory SCOPE]… [--memory-read SCOPE]… [--collection C]… [--label L]… [--instructions TEXT\|@file] [--description] [--max-output-tokens N] [--record-episodes] [--delegate AGENT]… [--max-depth N] [--token-budget N]` | Admin. `--delegate` lets it hand tasks to another agent ([orchestration](../guides/orchestration.md)) |
 | `agents update NAME [same options]` | Only the options given change; each change is a new version |
 | `models list` · `show ID` · `remove ID` | |
 | `models add ID --protocol P --model NAME --base-url URL [--locality] [--auth-env VAR] [--auth-header H] [--tools] [--context-window N] [--dimensions N]` | Admin. Stores the variable's name, never the key |

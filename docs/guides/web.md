@@ -15,10 +15,10 @@ A browser session lasts `server.session_hours` (12 by default). Sign out ends it
 | Section | For |
 |---|---|
 | Overview | health, what is waiting for you, starting a run, recent runs |
-| Runs | every run you can see, filtered by phase and agent; starting runs |
-| Run inspector | a live timeline: model calls (attempts, stop reasons, usage), tool calls (policy decision, approval, arguments, results, artifacts), the answer with citations, grounding, passages and memories used, the run's access and context budget, and the raw event log |
-| Approvals | tool calls held for a person, with the exact arguments; approve or deny with a recorded reason |
-| Agents | definitions: model, instructions, tools (with what the policy decides for each), memory and knowledge access, budget |
+| Runs | every run you can see, filtered by phase and agent (delegated runs hidden unless you include them); starting runs |
+| Run inspector | a live timeline: model calls (attempts, stop reasons, usage), tool calls (policy decision, approval, arguments, results, artifacts), the answer with citations, grounding, passages and memories used, the run's access and context budget, and the raw event log. For runs that delegated or were delegated: the orchestration (every agent's run, objective, outcome, citation check, usage, what it waits on and was not granted, a timeline of parallel work, refusals and disagreements), the lineage and the assignment ([orchestration](orchestration.md)) |
+| Approvals | tool calls held for a person, with the exact arguments and, for delegated runs, which agents delegated them; approve or deny with a recorded reason |
+| Agents | definitions: model, instructions, tools (with what the policy decides for each), memory and knowledge access, budget, delegates and delegation limits |
 | Tools | every tool, its effect, trust and policy outcome; MCP servers and their status; recent tool calls |
 | Models | deployments, whether each is ready (credential variable set, allowed by routing), adding, testing and removing them |
 | Knowledge | collections, uploading documents with access labels, document structure and chunks, searching as an agent would |

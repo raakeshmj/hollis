@@ -21,7 +21,8 @@
 | Platform journeys | The service layer every interface uses, driven by the deterministic demo model: runs, approvals, knowledge, memory, sessions, recovery (`tests/platform/`) | ✅ M6 |
 | API, SDK and CLI | REST contract, errors and journeys in process; a real loopback server with live SSE and restart (`tests/server/`); every SDK operation against both backends (`tests/sdk/`); CLI output, JSON and exit codes (`tests/cli/`); examples (`tests/test_examples.py`) | ✅ M6 |
 | Web app | TypeScript strict, ESLint with strict accessibility rules, Vitest component tests (`make web-check`); the committed build and its API contract (`tests/ui/`); Playwright journeys in the installed Chrome against a real server (opt-in: `make web-e2e`, `HOLLIS_UI_TESTS=1`; a CI job) | ✅ M6 |
-| Behavioral evals | Assertions on agent trajectories against real models | Pending live access (opt-in memory eval written, not run) |
+| Orchestration | Delegation through the platform: parallel and dependent work, plans, approvals, cascade, limits, budgets, failures, recovery (`tests/platform/test_orchestration*.py`); adversarial agents (`tests/security/test_orchestration_security.py`); multi-agent vs single-agent evaluation with simulated agents ([orchestration-evaluation](orchestration-evaluation.md), `tests/evals/orchestration/`) | ✅ M7 (offline) |
+| Behavioral evals | Assertions on agent trajectories against real models | Pending live access (opt-in memory, RAG and orchestration evals written, not run) |
 | End-to-end benchmarks | Task-level success on realistic suites | Later |
 
 ## Reliability and security properties to verify
@@ -75,6 +76,10 @@ Each property maps to a requirement and gets a test when its component exists. �
 | Cookie requests that change state need this server's Origin; unexpected Host headers are refused; responses carry the CSP | FR-18 | ✅ M6 `tests/server/test_api.py` |
 | Runs survive a dropped event stream, shutdown in the middle of a model call, cancellation and restart; the run index is re-derivable from the logs | NFR-2, FR-4 | ✅ M6 `tests/platform/test_runs.py`, `tests/sdk/`, `tests/server/test_live_server.py` |
 | The platform, SDK and CLI load no optional dependency at import | NFR-7 | ✅ M6 `tests/architecture/` |
+| A child run's memory and knowledge never exceed its agent's, its parent run's and its owner's current grants; a demoted owner cannot delegate; results pass only between delegations of the same parent (mutation-checked) | NFR-4, FR-12 | ✅ M7 `tests/platform/test_orchestration.py`, `tests/security/test_orchestration_security.py` |
+| An interrupted delegation re-executes once and attaches to its existing child; no child is ever created twice; cancelling a run cancels its descendants; no child outlives its delegation | NFR-2, FR-12 | ✅ M7 `tests/platform/test_orchestration.py`, `tests/evals/orchestration/` |
+| A child's answer cannot forge evidence or escape its frame; evidence crosses runs only from recorded sources and is verified by the parent's grounding check (mutation-checked) | NFR-4 | ✅ M7 `tests/security/test_orchestration_security.py` |
+| Depth, children, runs per tree and token budgets bound delegation; the fold rejects lineage beyond the recorded depth and calls beyond `max_total_tokens`; delegated work keeps the coordinator's reserve under concurrency | NFR-6 | ✅ M7 `tests/runtime/test_delegation.py`, `tests/platform/test_orchestration*.py` |
 
 ## Future behavioral evaluations (once live access is available)
 

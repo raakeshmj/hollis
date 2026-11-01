@@ -6,24 +6,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Hollis is a model-agnostic, local-first platform for building, running and orchestrating autonomous agents: a Python SDK, a CLI, a REST API and a web app over one platform layer. The **runtime and harness** are the foundation. Coding agents are one specialization, so don't let the core assume coding tasks.
 
-**Current milestone: M6 (developer experience, product interface and brand) is implemented and verified offline, on M2–M5. No live model, embedding model or third-party MCP server has been tested, and no sandbox exists. The next milestone (M7, multi-agent coordination) is not yet planned.** Don't implement work from later milestones. See [docs/product/roadmap.md](docs/product/roadmap.md).
+**Current milestone: M7 (multi-agent orchestration) is implemented and verified offline, on M2–M6. No live model, embedding model or third-party MCP server has been tested, and no sandbox exists. No later milestone is planned yet.** Don't implement unplanned work. See [docs/product/roadmap.md](docs/product/roadmap.md).
 
 ## Repository map
 
-- `src/hollis/runtime/`: the core. Events and schema registry, state fold, RunStore and ModelProvider ports, the tool port (`tools.py`), artifact and memory ports, the context engine (`context.py` types, `assembly.py` planning, `compaction.py` summarizers), conversation history, result handling, failure taxonomy, budgets, `Redactor`, `Runner`. It imports only stdlib, pydantic and itself (enforced by `tests/architecture/`).
+- `src/hollis/runtime/`: the core. Events and schema registry, state fold, RunStore and ModelProvider ports, the tool port (`tools.py`), artifact and memory ports, delegation facts (`delegation.py`: lineage, assignments, limits, child ids), the context engine (`context.py` types, `assembly.py` planning, `compaction.py` summarizers), conversation history, result handling, failure taxonomy, budgets, `Redactor`, `Runner`. It imports only stdlib, pydantic and itself (enforced by `tests/architecture/`).
 - `src/hollis/gateway/`: deployment catalog (Python or TOML), presets, routing policy, `ModelGateway` (implements the runtime's `ModelResolver`).
 - `src/hollis/tools/`: `@tool` function tools, `ToolRegistry`, `RulePolicy`, built-in filesystem and command tools (`builtin/`), MCP client (`mcp.py`, optional extra).
 - `src/hollis/knowledge/`: extraction (`extract.py`), sanitization, chunking, ingestion lifecycle (`ingest.py`, `KnowledgeBase`), hybrid retrieval (`retrieve.py`), knowledge tools. Separate from memory. SQLite lives in `adapters/sqlite_knowledge.py`; embeddings in `adapters/openai_embeddings.py` and `adapters/local_embeddings.py`.
 - `src/hollis/memory/`: memory records, write policy, `MemoryManager` (lifecycle, recall, deletion, maintenance), memory tools, episodes and extraction. Storage-independent; SQLite lives in `adapters/sqlite_memory.py`.
 - `src/hollis/adapters/`: stores, fake provider, the deterministic demo model (`demo_model.py`), credentials, endpoint config (`config.py`, SDK-free), shared HTTP layer (`_http.py`), protocol adapters `anthropic_messages.py` (official SDK) and `openai_chat.py` (raw httpx2). Provider SDKs and httpx2 are optional extras, loaded only by their adapter (enforced by subprocess tests).
-- `src/hollis/platform/`: the one application layer ([ADR-0026](docs/decisions/0026-workspace-and-platform-layer.md)): workspace (`hollis.toml` + `.hollis/`), `Platform` services (every method takes the calling principal), auth, run supervisor, views computed from the fold, API schemas.
+- `src/hollis/platform/`: the one application layer ([ADR-0026](docs/decisions/0026-workspace-and-platform-layer.md)): workspace (`hollis.toml` + `.hollis/`), `Platform` services (every method takes the calling principal), auth, run supervisor, views computed from the fold, API schemas; orchestration (`orchestration.py`: delegate tools, narrowing, limits, budget guard, reports, tree view) and the deterministic plan coordinator (`coordinator.py`).
 - `src/hollis/server/` (FastAPI, extra `server`; `static/` is the committed web build), `src/hollis/sdk/` (embedded `LocalBackend`, HTTP `RemoteBackend`, async and sync clients), `src/hollis/cli/` (Click on the SDK).
-- `web/`: the web app (React, TypeScript, Vite); `brand/`: identity assets and guide (`brand/build.py`); `examples/`: runnable SDK and CLI examples.
-- `tests/`: `platform/`, `server/`, `sdk/`, `cli/`, `ui/` (web build; Chrome journeys opt-in), `runtime/`, `tools/`, `memory/`, `knowledge/`, `evals/` (memory and compaction: `python -m tests.evals.report`; retrieval: `python -m tests.evals.rag.report`), `security/` (agentic attack scenarios), `adapters/` (mock transports), `gateway/`, `network/` (real loopback sockets and TLS), `conformance/` (offline, plus opt-in live via `HOLLIS_CONFORMANCE_*`), `recovery/`, `architecture/`, `live/`. Shared helpers live in `tests/support/`.
-- `docs/product/`: vision, requirements (FR-x / NFR-x IDs), roadmap. `docs/architecture/`: `overview.md` (components, decided vs open), `testing.md`, `evaluation.md`, `rag-evaluation.md`.
-- `docs/decisions/`: ADRs (template `0000-template.md`). `docs/plans/`: milestone plans (`m6-product.md` is the most recent).
-- `docs/guides/` and `docs/reference/`: installation, quickstart, SDK, web, deployment; CLI, REST API, configuration.
-- `docs/research/`: research notes. `docs/development.md`: workflow, ADR policy, web workflow, when to add skills, rules, hooks or subagents.
+- `web/`: the web app (React, TypeScript, Vite); `brand/`: identity assets and guide; `examples/`: runnable SDK and CLI examples.
+- `tests/`: `platform/`, `server/`, `sdk/`, `cli/`, `ui/` (web build; Chrome journeys opt-in), `runtime/`, `tools/`, `memory/`, `knowledge/`, `evals/` (memory and compaction: `python -m tests.evals.report`; retrieval: `python -m tests.evals.rag.report`; orchestration: `python -m tests.evals.orchestration.report`), `security/` (agentic attack scenarios), `adapters/` (mock transports), `gateway/`, `network/` (real loopback sockets and TLS), `conformance/` (offline, plus opt-in live via `HOLLIS_CONFORMANCE_*`), `recovery/`, `architecture/`, `live/`. Shared helpers live in `tests/support/`.
+- `docs/product/`: vision, requirements (FR-x / NFR-x IDs), roadmap. `docs/architecture/`: `overview.md` (components, decided vs open), `testing.md`, `evaluation.md`, `rag-evaluation.md`, `orchestration-evaluation.md`.
+- `docs/decisions/`: ADRs (template `0000-template.md`). `docs/plans/`: milestone plans (`m7-orchestration.md` is the most recent).
+- `docs/guides/` and `docs/reference/`: installation, quickstart, SDK, web, orchestration, deployment; CLI, REST API, configuration.
+- `docs/research/`: research notes (incl. multi-agent). `docs/development.md`: workflow, ADR policy, web workflow, when to add skills, rules, hooks or subagents.
 
 **Before making an architectural decision**, read `docs/architecture/overview.md` and the relevant ADRs. If the change is load-bearing and costly to reverse, propose a new ADR rather than deciding silently.
 
@@ -40,8 +40,7 @@ HOLLIS_LIVE_TESTS=1 ANTHROPIC_API_KEY=... uv run pytest tests/live -m live   # o
 
 ## Conventions
 
-- Python ≥ 3.12. Full type annotations; pyright strict must report 0 errors.
-- Ruff rule set and line length (100) are configured in `pyproject.toml`. Don't add `noqa` or `type: ignore` without a reason on the same line.
+- Python ≥ 3.12, fully annotated; pyright strict reports 0 errors. Ruff (line length 100) is configured in `pyproject.toml`; no `noqa` or `type: ignore` without a reason on the same line.
 - Use async only on I/O-bound paths (model, storage, tool execution); keep pure logic synchronous ([ADR-0003](docs/decisions/0003-async-first-runtime.md)).
 - The core never imports vendor SDKs or adapters. Vendor code lives in adapters behind ports ([ADR-0002](docs/decisions/0002-ports-and-adapters.md)).
 - Domain and event types are frozen Pydantic v2 models with `extra="forbid"`.
@@ -71,6 +70,7 @@ HOLLIS_LIVE_TESTS=1 ANTHROPIC_API_KEY=... uv run pytest tests/live -m live   # o
   - Never compare vectors across embedding spaces; changing models means `migrate_embeddings`.
   - Knowledge never writes memory. Retrieved text is data: framed, citation keys assigned by Hollis, never an input to authorization.
   - Dense results from the hashing or simulated embedders are not semantic-quality evidence; don't claim otherwise.
+- Orchestration ([ADR-0030](docs/decisions/0030-orchestration-on-durable-runs.md)–[0032](docs/decisions/0032-a2a-interoperability.md)): a delegation is a tool call executed as a child run with a deterministic id (no second engine, no way to create a child twice). Child access only narrows (agent ∩ parent run ∩ owner's current grants); reports come from the child's log, and child text never supplies evidence. Every tree is bounded; single agent stays the default.
 - Interfaces ([ADR-0026](docs/decisions/0026-workspace-and-platform-layer.md)–[0029](docs/decisions/0029-web-application-and-design-system.md)):
   - Behaviour and authorization live in `Platform` services; the API, SDK, CLI and web app only call them and render views. Never re-derive run semantics in an interface.
   - Authentication is never optional; bind to loopback by default; resources a caller can't see answer 404.
@@ -96,5 +96,5 @@ HOLLIS_LIVE_TESTS=1 ANTHROPIC_API_KEY=... uv run pytest tests/live -m live   # o
 ## Workflow
 
 - Use Plan Mode for complex or high-impact changes. Approved, bounded tasks go straight to implementation.
-- Work on a branch, in small commits that each pass `make check`, with conventional prefixes (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `chore:`, `ci:`).
+- Work on a branch, in small commits that each pass `make check` (check its exit status, not piped output), with conventional prefixes (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `chore:`, `ci:`).
 - Keep this file short (target ≤ 100 lines). Detailed guidance belongs in `docs/` or in path-scoped rules or skills, added only when a need is proven ([docs/development.md](docs/development.md)).

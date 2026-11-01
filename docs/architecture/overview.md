@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Status: direction-setting. Implemented so far (M1–M6): the product interfaces (`hollis.platform`: workspace, principal-aware services, auth, run supervision and views; `hollis.server`: the REST API; `hollis.sdk`: the embedded and remote SDK; `hollis.cli`; the web app in `web/`, served from `hollis.server`), the runtime core (`hollis.runtime`: events, state fold, RunStore, ModelProvider, embedding, tool, artifact, memory and knowledge ports, grounding checks, identifier-aware text analysis, failure taxonomy, budgets, redaction, the multi-turn tool loop, the context engine), the memory system (`hollis.memory`: records, write policy, lifecycle, recall, memory tools, episodes), the knowledge system (`hollis.knowledge`: extraction, chunking, ingestion lifecycle, hybrid retrieval, knowledge tools), the tool system (`hollis.tools`: `@tool` definitions, registry, rule-based policy, filesystem and command tools, MCP client), the model gateway (`hollis.gateway`: catalog, routing policy, resolution), and adapters (`hollis.adapters`: in-memory and SQLite stores, scripted fake provider, credential loader, endpoint config, Anthropic Messages and OpenAI-compatible Chat Completions protocol adapters). Each section separates **decided** from **open**. Decided items link to ADRs, and open items name the milestone that resolves them.
+Status: direction-setting. Implemented so far (M1–M7): multi-agent orchestration (`hollis.platform.orchestration` and the workflow coordinator, on lineage recorded by `hollis.runtime.delegation`), the product interfaces (`hollis.platform`: workspace, principal-aware services, auth, run supervision and views; `hollis.server`: the REST API; `hollis.sdk`: the embedded and remote SDK; `hollis.cli`; the web app in `web/`, served from `hollis.server`), the runtime core (`hollis.runtime`: events, state fold, RunStore, ModelProvider, embedding, tool, artifact, memory and knowledge ports, grounding checks, identifier-aware text analysis, failure taxonomy, budgets, redaction, the multi-turn tool loop, the context engine), the memory system (`hollis.memory`: records, write policy, lifecycle, recall, memory tools, episodes), the knowledge system (`hollis.knowledge`: extraction, chunking, ingestion lifecycle, hybrid retrieval, knowledge tools), the tool system (`hollis.tools`: `@tool` definitions, registry, rule-based policy, filesystem and command tools, MCP client), the model gateway (`hollis.gateway`: catalog, routing policy, resolution), and adapters (`hollis.adapters`: in-memory and SQLite stores, scripted fake provider, credential loader, endpoint config, Anthropic Messages and OpenAI-compatible Chat Completions protocol adapters). Each section separates **decided** from **open**. Decided items link to ADRs, and open items name the milestone that resolves them.
 
 ## Shape
 
@@ -44,7 +44,7 @@ Packages appear only when there is code to put in them. Nothing gets created to 
 | **Knowledge** | Ingestion with provenance and structure, hybrid retrieval with access control in the store, cited passages in context, knowledge tools, grounding checks ([ADR-0022](../decisions/0022-embedding-task.md)–[0025](../decisions/0025-rag-grounding-and-security.md)). | M5 |
 | **Platform layer** | Workspace (`hollis.toml`, `.hollis/`), the one set of services every interface calls, with authorization by principal, background run supervision, the run index, views computed from the fold, the demo model ([ADR-0026](../decisions/0026-workspace-and-platform-layer.md), [ADR-0028](../decisions/0028-authentication-and-authorization.md)). | M6 |
 | **Interfaces** | REST API (versioned, OpenAPI, problem details, SSE), the SDK (embedded or remote, async and sync), the CLI, the web app ([ADR-0027](../decisions/0027-rest-api-contract.md), [ADR-0029](../decisions/0029-web-application-and-design-system.md)). None re-derives run semantics. | M6 |
-| **Coordination** | Multi-agent composition built on runs, not a separate engine. | M7 |
+| **Orchestration** | Delegation as durable child runs: delegate tools, permission narrowing, limits and budgets, reports with verified evidence, plans on a deterministic coordinator, the orchestration view ([ADR-0030](../decisions/0030-orchestration-on-durable-runs.md)–[0032](../decisions/0032-a2a-interoperability.md)). Built on runs, not a separate engine. | M7 |
 
 ## Runtime and harness
 
@@ -150,6 +150,32 @@ Packages appear only when there is code to put in them. Nothing gets created to 
 
 **Open.** TLS termination and external identity providers (behind a proxy today); more than one process per workspace; run deletion.
 
+## Orchestration
+
+**Decided (M7).**
+- **A delegation is a tool call whose execution is a child run** ([ADR-0030](../decisions/0030-orchestration-on-durable-runs.md)):
+  - Children are ordinary runs: same runner, events, approvals, cancellation and views.
+  - Policy, approval, read-only parallelism and recovery come from the tool lifecycle.
+  - Child ids derive from (parent run, invocation), so a re-executed delegation attaches to its child: no duplicates.
+- **Lineage, the structured assignment and delegation limits are recorded** in the child's `RunCreated`. The run index derives the tree from the logs.
+- **Collaboration is structured:**
+  - assignments down, with earlier results passed by reference along with their verified evidence;
+  - reports up, built from the child's log: outcome, usage, unknown side effects, citation check, evidence with stable handles, a validated self-report, and the answer framed as untrusted;
+  - disagreements kept, not resolved.
+- **Plans** run on the deterministic workflow coordinator: waves of ready steps, skipped dependents, summary or hand-off.
+- **Authority only narrows** ([ADR-0031](../decisions/0031-orchestration-authority-and-limits.md)):
+  - A child's access is its agent's configuration within the parent run's access within the owner's current grants.
+  - Delegate tools declare the strongest effect they can reach.
+  - Depth, children, runs, a token budget with a coordinator reserve (enforced by a runner guard) and wait limits bound every tree.
+  - Cancellation cascades.
+- **A2A** is mapped at the boundary but not implemented, and internal orchestration does not depend on it ([ADR-0032](../decisions/0032-a2a-interoperability.md)).
+
+**Open.**
+- Live models as coordinators and specialists (opt-in evaluation written, not run).
+- Suspending a parent instead of waiting in the tool, if human-in-the-loop children routinely exceed an hour.
+- A2A server and client.
+- Cost-based budgets.
+
 ## Persistence and deployment
 
 **Decided.** Local-first (NFR-8). Storage sits behind a port.
@@ -214,5 +240,8 @@ See [testing.md](testing.md).
 | REST contract, long-running work (SSE, long polling), SDK backends | Accepted (M6) | ADR-0027 |
 | Authentication and authorization | Accepted (M6) | ADR-0028 |
 | Web application and design system | Accepted (M6) | ADR-0029 |
+| Orchestration as delegation to durable child runs; plans on a deterministic coordinator | Accepted (M7) | ADR-0030 |
+| Authority, limits and budgets for delegated runs | Accepted (M7) | ADR-0031 |
+| A2A: mapped boundary, implementation deferred | Accepted (M7) | ADR-0032 |
 | TLS, external identity providers, multi-process workspaces | Open | — |
 | Cloud deployment target | Open | Undecided |

@@ -32,6 +32,8 @@ Authentication cannot be turned off.
 
 `demo = true` (default) offers the built-in demo model as deployment `demo`: deterministic rules, not a language model. Agents that use it fail to start runs when it is off.
 
+The deployment id `workflow` is always reserved for the built-in plan coordinator (deterministic code, not a model; [ADR-0030](../decisions/0030-orchestration-on-durable-runs.md)). Agents cannot use it; plans run on it.
+
 ## `[[deployments]]`
 
 Model deployments, the gateway catalog ([ADR-0011](../decisions/0011-model-gateway-and-deployments.md)). One table per deployment:
@@ -90,11 +92,24 @@ tools = "knowledge_*"              # glob over tool names
 effects = []                       # e.g. ["read_only"]; empty: any
 trust = []                         # e.g. ["trusted"]; empty: any
 environments = []                  # e.g. ["production"]; empty: any
+delegated = true                   # optional: true matches only runs another agent delegated
 name = "knowledge-read"
 reason = "read-only knowledge tools"
 ```
 
-Without a matching rule: trusted read-only tools run; everything else waits for approval.
+Without a matching rule: trusted read-only tools run; everything else waits for approval. Delegate tools (`delegate_<agent>`) declare the strongest effect the delegated agent can reach, so delegating to a read-only agent runs and delegating to one that can change things waits for approval.
+
+## `[orchestration]`
+
+Limits on agents delegating to agents ([ADR-0031](../decisions/0031-orchestration-authority-and-limits.md), [guide](../guides/orchestration.md)). An agent's own `delegation` limits can only narrow these.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `max_depth` | `2` | Delegation levels below the root (0–5) |
+| `max_children` | `8` | Delegations per run |
+| `max_runs` | `24` | Runs per orchestration, the root included |
+| `token_budget` | none | Provider-reported tokens for the whole orchestration. Delegated work stops at 75% of it; calls in flight reserve their output budget and estimated input |
+| `wait_s` | `900` | How long a run waits for one delegate (at most 3500; also capped by its deadline) |
 
 ## `[knowledge]`
 

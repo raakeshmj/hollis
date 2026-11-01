@@ -39,3 +39,12 @@ def test_approval_rules_decide_by_path(tmp_path: Path) -> None:
     assert "denied fs_write_file" in out
     assert (tmp_path / "notes" / "a.txt").read_text() == "yes"
     assert not (tmp_path / "elsewhere.txt").exists()
+
+
+def test_orchestration(tmp_path: Path) -> None:
+    out = run("orchestration.py", str(tmp_path))
+    assert "lead: completed, 4 runs, depth 1" in out
+    assert "researcher: completed" in out
+    assert "make ship" in out
+    assert "41000 euros" in out
+    assert "plan: Plan finished: 3 of 3 steps completed." in out

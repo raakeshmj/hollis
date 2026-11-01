@@ -2,7 +2,7 @@
 
 A model-agnostic, local-first platform for building, running and supervising autonomous agents: a Python SDK, a CLI, a REST API and a web app.
 
-**Status: pre-alpha. M6 (product interfaces and brand), M5 (knowledge retrieval and RAG), M4 (context engineering and memory), M3 (tool runtime) and M2 (universal model gateway) are implemented and verified offline; no live provider, inference server or third-party MCP server has been tested yet.** See the [roadmap](docs/product/roadmap.md).
+**Status: pre-alpha. M7 (multi-agent orchestration), M6 (product interfaces and brand), M5 (knowledge retrieval and RAG), M4 (context engineering and memory), M3 (tool runtime) and M2 (universal model gateway) are implemented and verified offline; no live provider, inference server or third-party MCP server has been tested yet.** See the [roadmap](docs/product/roadmap.md).
 
 ## Try it
 
@@ -16,6 +16,15 @@ hollis serve                        # the web app at http://127.0.0.1:7878 (sign
 No API key or model download is needed to try it: a fresh workspace has a **demo model**, which is deterministic rules, not a language model (its answers start with `[demo]`), so you can see tools, approvals, memory and knowledge work before connecting a real one. Start with the [quickstart](docs/guides/quickstart.md).
 
 ## What exists today
+
+- **Multi-agent orchestration** ([ADR-0030](docs/decisions/0030-orchestration-on-durable-runs.md)–[0032](docs/decisions/0032-a2a-interoperability.md), [guide](docs/guides/orchestration.md)). It is optional; a single agent stays the default.
+  - **Delegation:** agents with `delegates` hand bounded tasks to other agents, each with its own model, tools, memory and knowledge. Every delegated task is a durable child run you can inspect, approve, cancel and resume.
+  - **How work runs:** independent read-only tasks run concurrently; dependent work receives earlier results by reference; hierarchies are allowed within a depth limit.
+  - **Plans:** a DAG of steps on a deterministic coordinator, with no model and no tokens.
+  - **Reports:** built from the child's log. They carry its outcome, its usage, a citation check and verified evidence, and frame the answer as untrusted. Disagreements are kept.
+  - **Safety:** permissions only narrow. Depth, fan-out, runs and token budgets are bounded, and cancellation cascades. Recovery never creates a child twice.
+  - **Inspection:** a tree in the web app (`hollis runs tree`, `GET /v1/runs/{id}/tree`).
+  - **Evaluation:** [evaluated](docs/architecture/orchestration-evaluation.md) against single-agent baselines, including where multiple agents lose.
 
 - **Product interfaces** ([ADR-0026](docs/decisions/0026-workspace-and-platform-layer.md)–[0029](docs/decisions/0029-web-application-and-design-system.md)), all over one service layer, so they behave identically:
   - **Workspace:** `hollis.toml` (configuration, safe to commit) and `.hollis/` (SQLite stores). `hollis init` creates one with a starter agent.
@@ -78,7 +87,8 @@ No API key or model download is needed to try it: a fresh workspace has a **demo
 - **Exact dense scan** is linear (about 240 ms at 20,000 chunks of 384 dimensions); larger collections need an approximate index. There's no OCR, multimodal retrieval or web connector.
 - **Deleting a memory doesn't erase copies in run logs** that recalled it. Runs themselves can't be deleted yet.
 - **Text generation only; non-streaming.** Responses are capped at about 21k output tokens on the Anthropic protocol.
-- **Not yet built:** native adapters beyond Anthropic (for example OpenAI's Responses API, Gemini or Bedrock); multi-agent orchestration.
+- **Not yet built:** native adapters beyond Anthropic (for example OpenAI's Responses API, Gemini or Bedrock); A2A interoperability with other vendors' agents ([ADR-0032](docs/decisions/0032-a2a-interoperability.md)).
+- **Orchestration is untested with live models.** The evaluation uses deterministic simulated agents. Real coordinators write vaguer assignments and misroute more; expect worse results than the offline numbers.
 - **Interfaces:** no TLS termination or external identity provider (put a proxy in front for network use; [deployment](docs/guides/deployment.md)); one server process per workspace; the web app is tested in Chrome only, and accessibility is checked automatically, not with screen-reader users. Embedded SDK runs stop when your process exits (they stay resumable).
 - **No cost accounting or input-token budgets.** Usage is recorded as reported.
 - **Run input is stored verbatim.** Secrets embedded in user text are not detected unless they're registered credentials ([details](docs/product/requirements.md#data-persistence-and-secret-handling)).
@@ -248,10 +258,10 @@ HOLLIS_LIVE_TESTS=1 ANTHROPIC_API_KEY=... uv run pytest tests/live -m live -ra
 
 ## Documentation
 
-- [Installation](docs/guides/installation.md) · [Quickstart](docs/guides/quickstart.md) · [SDK](docs/guides/sdk.md) · [Web app](docs/guides/web.md) · [Running a shared server](docs/guides/deployment.md) · [Examples](examples/)
+- [Installation](docs/guides/installation.md) · [Quickstart](docs/guides/quickstart.md) · [SDK](docs/guides/sdk.md) · [Web app](docs/guides/web.md) · [Multi-agent orchestration](docs/guides/orchestration.md) · [Running a shared server](docs/guides/deployment.md) · [Examples](examples/)
 - Reference: [CLI](docs/reference/cli.md) · [REST API](docs/reference/rest-api.md) · [Configuration](docs/reference/configuration.md) · [Brand guide](brand/README.md)
 - [Vision and scope](docs/product/vision.md) · [Requirements](docs/product/requirements.md) · [Roadmap](docs/product/roadmap.md)
-- [Architecture overview](docs/architecture/overview.md) · [Model compatibility](docs/architecture/model-compatibility.md) · [Testing strategy](docs/architecture/testing.md) · [Memory evaluation](docs/architecture/evaluation.md) · [RAG evaluation](docs/architecture/rag-evaluation.md)
-- [Decision records](docs/decisions/) · Plans: [M1](docs/plans/m1-runtime-core.md), [M2 gateway](docs/plans/m2-gateway.md), [M2 Anthropic](docs/plans/m2-anthropic.md), [M3 tools](docs/plans/m3-tools.md), [M4 context and memory](docs/plans/m4-context-memory.md), [M5 knowledge](docs/plans/m5-knowledge.md), [M6 product](docs/plans/m6-product.md)
+- [Architecture overview](docs/architecture/overview.md) · [Model compatibility](docs/architecture/model-compatibility.md) · [Testing strategy](docs/architecture/testing.md) · [Memory evaluation](docs/architecture/evaluation.md) · [RAG evaluation](docs/architecture/rag-evaluation.md) · [Orchestration evaluation](docs/architecture/orchestration-evaluation.md)
+- [Decision records](docs/decisions/) · Plans: [M1](docs/plans/m1-runtime-core.md), [M2 gateway](docs/plans/m2-gateway.md), [M2 Anthropic](docs/plans/m2-anthropic.md), [M3 tools](docs/plans/m3-tools.md), [M4 context and memory](docs/plans/m4-context-memory.md), [M5 knowledge](docs/plans/m5-knowledge.md), [M6 product](docs/plans/m6-product.md), [M7 orchestration](docs/plans/m7-orchestration.md)
 - [Development process](docs/development.md)
 - [Research notes](docs/research/)
