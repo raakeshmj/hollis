@@ -23,6 +23,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, JsonValue
 from hollis.runtime.artifacts import ArtifactRef
 from hollis.runtime.context import CompactionSummary, ContextPolicy, TokenEstimate
 from hollis.runtime.conversation import ToolCall
+from hollis.runtime.delegation import Assignment, DelegationLimits, Lineage
 from hollis.runtime.events import (
     AnswerGrounded,
     ContextAssembled,
@@ -251,6 +252,23 @@ class RunState(_Frozen):
     """The grounding check of the latest final answer, if one was recorded."""
     context: ContextAssembled | None = None
     """The assembled context of the current (or most recent) logical model call."""
+    lineage: Lineage | None = None
+    assignment: Assignment | None = None
+    delegation: DelegationLimits | None = None
+
+    @property
+    def depth(self) -> int:
+        """Delegation depth: 0 for a run nobody delegated."""
+        return self.lineage.depth if self.lineage is not None else 0
+
+    @property
+    def total_tokens(self) -> int:
+        return self.usage.input_tokens + self.usage.output_tokens
+
+    @property
+    def token_budget_reached(self) -> bool:
+        limit = self.budget.max_total_tokens
+        return limit is not None and self.total_tokens >= limit
 
     @property
     def compacted_through(self) -> int:
@@ -296,6 +314,7 @@ def apply(state: RunState | None, event: EventEnvelope) -> RunState:
         names = [t.name for t in payload.tools]
         if len(set(names)) != len(names):
             raise InvalidEventSequence("duplicate tool names in RunCreated")
+        _check_lineage(event.run_id, payload)
         return RunState(
             run_id=event.run_id,
             version=event.sequence,
@@ -311,6 +330,9 @@ def apply(state: RunState | None, event: EventEnvelope) -> RunState:
             context_policy=payload.context,
             memory_access=payload.memory,
             knowledge_access=payload.knowledge,
+            lineage=payload.lineage,
+            assignment=payload.assignment,
+            delegation=payload.delegation,
         )
 
     if state is None:  # unreachable: next_status only allows RunCreated without a run
@@ -403,7 +425,25 @@ def fold(events: Iterable[EventEnvelope]) -> RunState:
 # --- model calls --------------------------------------------------------------------------------
 
 
+def _check_lineage(run_id: UUID, created: RunCreated) -> None:
+    lineage = created.lineage
+    if lineage is None:
+        if created.assignment is not None:
+            raise InvalidEventSequence("an assignment needs a parent run")
+        return
+    if run_id in (lineage.parent_run_id, lineage.root_run_id):
+        raise InvalidEventSequence("a run cannot be its own parent or root")
+    if lineage.depth == 1 and lineage.root_run_id != lineage.parent_run_id:
+        raise InvalidEventSequence("a depth-1 run's parent is its root")
+    if created.delegation is not None and lineage.depth > created.delegation.max_depth:
+        raise InvalidEventSequence(
+            f"depth {lineage.depth} exceeds max_depth {created.delegation.max_depth}"
+        )
+
+
 def _model_call_started(state: RunState, op: str, attempt: int) -> dict[str, Any]:
+    if state.token_budget_reached:
+        raise InvalidEventSequence(f"max_total_tokens {state.budget.max_total_tokens} reached")
     if state.status is RunStatus.ATTEMPT_FAILED:
         if op != state.operation_id:
             raise InvalidEventSequence(f"operation_id {op!r} != {state.operation_id!r}")

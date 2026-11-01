@@ -2478,6 +2478,18 @@
             "minimum": 256.0,
             "title": "Max Tool Output Chars",
             "type": "integer"
+          },
+          "max_total_tokens": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Total Tokens"
           }
         },
         "required": [

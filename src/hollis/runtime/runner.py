@@ -37,7 +37,7 @@ import random
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Protocol
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
@@ -57,6 +57,7 @@ from hollis.runtime.context import (
     merge_summary,
 )
 from hollis.runtime.conversation import ToolSpec
+from hollis.runtime.delegation import Assignment, DelegationLimits, Lineage
 from hollis.runtime.events import (
     AnswerGrounded,
     AnyPayload,
@@ -143,6 +144,7 @@ log = logging.getLogger("hollis.runtime")
 __all__ = [
     "ApprovalMismatch",
     "DeploymentChanged",
+    "ModelCallGuard",
     "RunSpec",
     "Runner",
     "SecretInRunInput",
@@ -170,6 +172,10 @@ class RunSpec(BaseModel):
     """Memory namespaces this run may read and write. None: no memory."""
     knowledge: KnowledgeAccess | None = None
     """Knowledge collections and labels this run may read. None: no knowledge."""
+    lineage: Lineage | None = None
+    """Set by the application when another run delegated this one (ADR-0030)."""
+    assignment: Assignment | None = None
+    delegation: DelegationLimits | None = None
 
 
 class SecretInRunInput(ValueError):
@@ -202,6 +208,15 @@ class ApprovalMismatch(ValueError):
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+class ModelCallGuard(Protocol):
+    """Decides whether a run may start a model call, from facts outside its own log (for
+    example a token budget shared by a tree of delegated runs, ADR-0031)."""
+
+    async def refuse(self, state: RunState) -> str | None:
+        """A reason to refuse the next model call, or None to allow it."""
+        ...
 
 
 type RunObserver = Callable[[EventEnvelope, RunState], Awaitable[None]]
@@ -243,11 +258,14 @@ class Runner:
         summarizer: Summarizer | None = None,
         knowledge: KnowledgeRetrieval | None = None,
         observers: Sequence[RunObserver] = (),
+        guard: ModelCallGuard | None = None,
     ) -> None:
         """`policy` defaults to DefaultToolPolicy (trusted read-only tools allowed, everything
         else requires approval). Without an `approver`, calls requiring approval are denied.
         Without `artifacts`, large tool results are truncated (M3 behaviour). Without `memory`,
-        nothing is recalled. `summarizer` defaults to the deterministic one."""
+        nothing is recalled. `summarizer` defaults to the deterministic one. `guard`, when given,
+        is asked before every model call; a refusal (or an error in the guard) fails the run with
+        budget_exhausted."""
         self._store = store
         self._models: ModelResolver = (
             models if isinstance(models, ModelResolver) else SingleProvider(models)
@@ -266,11 +284,15 @@ class Runner:
         self._summarizer: Summarizer = summarizer or DeterministicSummarizer()
         self._knowledge = knowledge
         self._observers = tuple(observers)
+        self._guard = guard
 
     # --- public API -----------------------------------------------------------------------------
 
-    async def create(self, spec: RunSpec) -> RunState:
-        """Validate and persist a new run. Nothing is persisted if validation fails."""
+    async def create(self, spec: RunSpec, *, run_id: UUID | None = None) -> RunState:
+        """Validate and persist a new run. Nothing is persisted if validation fails.
+
+        `run_id` lets the application choose the id (delegations derive it from the parent
+        invocation). Creating a run whose id exists raises the store's ConcurrencyConflict."""
         # Resolving first applies routing policy and registers the deployment's secrets.
         descriptor = self._models.resolve(spec.model).descriptor
         if self._redactor.contains_secret(spec.input) or (
@@ -300,8 +322,11 @@ class Runner:
             context=spec.context,
             memory=spec.memory,
             knowledge=spec.knowledge,
+            lineage=spec.lineage,
+            assignment=spec.assignment,
+            delegation=spec.delegation,
         )
-        return await self._append(None, self._new_id(), payload)
+        return await self._append(None, run_id or self._new_id(), payload)
 
     async def execute(self, run_id: UUID) -> RunState:
         """Drive a run until it is terminal or waiting for approval. Idempotent: a terminal run
@@ -434,6 +459,15 @@ class Runner:
         ):
             message = f"max_model_turns {state.budget.max_model_turns} reached"
             return await self._fail(state, FailureReason.BUDGET_EXHAUSTED, message, None)
+        if state.token_budget_reached:
+            message = (
+                f"max_total_tokens {state.budget.max_total_tokens} reached "
+                f"({state.total_tokens} tokens used)"
+            )
+            return await self._fail(state, FailureReason.BUDGET_EXHAUSTED, message, None)
+        refusal = await self._guard_refusal(state)
+        if refusal is not None:
+            return await self._fail(state, FailureReason.BUDGET_EXHAUSTED, refusal, None)
         timeout_s = state.budget.attempt_timeout_s
         if remaining is not None:
             timeout_s = min(timeout_s, remaining)
@@ -469,6 +503,15 @@ class Runner:
             operation_id=operation_id, attempt=state.attempts, response=self._redact(response)
         )
         return await self._append(state, state.run_id, recorded)
+
+    async def _guard_refusal(self, state: RunState) -> str | None:
+        if self._guard is None:
+            return None
+        try:
+            return await self._guard.refuse(state)
+        except Exception as exc:  # fail closed: a budget that cannot be checked is not granted
+            log.warning("run %s: model call guard failed (%s)", state.run_id, type(exc).__name__)
+            return f"the run's budget could not be checked ({type(exc).__name__})"
 
     def _redact(self, response: ModelResponse) -> ModelResponse:
         """Remove registered secrets from everything persisted from the model."""
@@ -809,6 +852,7 @@ class Runner:
                 tool=ref,
                 arguments=arguments,
                 environment=self._environment,
+                depth=state.depth,
             )
         )
         return verdict.decision, verdict.reason, verdict.rule, arguments

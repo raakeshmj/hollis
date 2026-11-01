@@ -209,6 +209,8 @@ class PolicyRequest(_Frozen):
     arguments: dict[str, JsonValue]
     environment: str | None = None
     """Operator-defined execution environment label (e.g. "dev", "prod")."""
+    depth: int = Field(default=0, ge=0)
+    """Delegation depth of the run (0: nobody delegated it), recorded in its lineage."""
 
 
 class PolicyDecision(_Frozen):

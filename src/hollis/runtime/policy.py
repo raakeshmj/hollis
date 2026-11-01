@@ -41,6 +41,9 @@ class RunBudget(BaseModel):
     """Per result; longer output is truncated with an explicit marker."""
     approval_timeout_s: float = Field(default=3600.0, gt=0)
     """Pending approvals expire after this long and the call is denied."""
+    max_total_tokens: int | None = Field(default=None, ge=1)
+    """Provider-reported tokens (input + output) for the whole run. No new model call starts once
+    recorded usage reaches it; a call in flight can overshoot by its own size."""
 
 
 def default_ambiguous_policy(*, provider_deduplicates: bool) -> AmbiguousOutcomePolicy:

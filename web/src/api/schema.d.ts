@@ -1878,6 +1878,8 @@ export interface components {
              * @default 16000
              */
             max_tool_output_chars: number;
+            /** Max Total Tokens */
+            max_total_tokens?: number | null;
         };
         /** RunDetail */
         RunDetail: {

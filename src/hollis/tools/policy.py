@@ -38,6 +38,8 @@ class Rule:
     environments: frozenset[str] | None = None
     when: Predicate | None = None
     """Extra deterministic condition, e.g. on a path argument."""
+    delegated: bool | None = None
+    """True: only runs another run delegated; False: only runs nobody delegated."""
     name: str = ""
     reason: str = ""
 
@@ -52,6 +54,7 @@ class Rule:
             and (self.effects is None or tool.effect in self.effects)
             and (self.trust is None or tool.trust in self.trust)
             and (self.environments is None or request.environment in self.environments)
+            and (self.delegated is None or (request.depth > 0) == self.delegated)
             and (self.when is None or self.when(request))
         )
 
@@ -86,6 +89,7 @@ def _rule(
     when: Predicate | None,
     name: str,
     reason: str,
+    delegated: bool | None = None,
 ) -> Rule:
     return Rule(
         decision=decision,
@@ -94,6 +98,7 @@ def _rule(
         trust=frozenset(trust) if trust is not None else None,
         environments=frozenset(environments) if environments is not None else None,
         when=when,
+        delegated=delegated,
         name=name,
         reason=reason,
     )
@@ -106,10 +111,11 @@ def allow(
     trust: Iterable[ToolTrust] | None = None,
     environments: Iterable[str] | None = None,
     when: Predicate | None = None,
+    delegated: bool | None = None,
     name: str = "",
     reason: str = "",
 ) -> Rule:
-    return _rule(Decision.ALLOW, tools, effects, trust, environments, when, name, reason)
+    return _rule(Decision.ALLOW, tools, effects, trust, environments, when, name, reason, delegated)
 
 
 def deny(
@@ -119,10 +125,11 @@ def deny(
     trust: Iterable[ToolTrust] | None = None,
     environments: Iterable[str] | None = None,
     when: Predicate | None = None,
+    delegated: bool | None = None,
     name: str = "",
     reason: str = "",
 ) -> Rule:
-    return _rule(Decision.DENY, tools, effects, trust, environments, when, name, reason)
+    return _rule(Decision.DENY, tools, effects, trust, environments, when, name, reason, delegated)
 
 
 def require_approval(
@@ -132,10 +139,21 @@ def require_approval(
     trust: Iterable[ToolTrust] | None = None,
     environments: Iterable[str] | None = None,
     when: Predicate | None = None,
+    delegated: bool | None = None,
     name: str = "",
     reason: str = "",
 ) -> Rule:
-    return _rule(Decision.REQUIRE_APPROVAL, tools, effects, trust, environments, when, name, reason)
+    return _rule(
+        Decision.REQUIRE_APPROVAL,
+        tools,
+        effects,
+        trust,
+        environments,
+        when,
+        name,
+        reason,
+        delegated,
+    )
 
 
 class CallbackApprover:

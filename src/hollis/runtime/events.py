@@ -25,6 +25,7 @@ from pydantic import (
 
 from hollis.runtime.artifacts import ArtifactRef
 from hollis.runtime.context import CompactionSummary, ContextBudget, ContextPolicy, TokenEstimate
+from hollis.runtime.delegation import Assignment, DelegationLimits, Lineage
 from hollis.runtime.grounding import GroundingReport
 from hollis.runtime.knowledge import KnowledgeAccess, RetrievedPassage
 from hollis.runtime.memory import MemoryAccess, RecalledMemory
@@ -77,6 +78,12 @@ class RunCreated(_Payload):
     """Memory namespaces granted to this run by the application."""
     knowledge: KnowledgeAccess | None = None
     """Knowledge collections and labels granted to this run by the application."""
+    lineage: Lineage | None = None
+    """Set when another run delegated this one (ADR-0030)."""
+    assignment: Assignment | None = None
+    """The structured task of a delegated run; `input` is its rendering."""
+    delegation: DelegationLimits | None = None
+    """Limits on delegation from this run and everything below it. None: no delegation."""
 
 
 class ModelCallStarted(_Payload):
@@ -302,7 +309,7 @@ EventPayload = Annotated[AnyPayload, Field(discriminator="type")]
 # Current payload schema version per event type. Bump a version only together with an
 # upcaster in _UPCASTERS that converts the previous version's payload dict.
 CURRENT_SCHEMA_VERSIONS: Mapping[EventType, int] = {
-    EventType.RUN_CREATED: 5,
+    EventType.RUN_CREATED: 6,
     EventType.MODEL_CALL_STARTED: 1,
     EventType.MODEL_RESPONSE_RECORDED: 4,
     EventType.MODEL_CALL_FAILED: 1,
@@ -336,7 +343,8 @@ def _added_defaulted_fields(payload: dict[str, Any]) -> dict[str, Any]:
     """For changes that only add fields with defaults: M3 (v2 -> v3: tools, tool calls) and M4
     (RunCreated v3 -> v4: context policy, memory access; ModelResponseRecorded v3 -> v4:
     `Usage.cache_included_in_input`; ToolResultRecorded v1 -> v2: artifact) and M5 (RunCreated
-    v4 -> v5: knowledge access; ContextAssembled v1 -> v2: passages)."""
+    v4 -> v5: knowledge access; ContextAssembled v1 -> v2: passages) and M7 (RunCreated v5 -> v6:
+    lineage, assignment, delegation limits, `RunBudget.max_total_tokens`)."""
     return payload
 
 
@@ -349,6 +357,7 @@ _UPCASTERS: Mapping[tuple[EventType, int], Upcaster] = {
     (EventType.TOOL_RESULT_RECORDED, 1): _added_defaulted_fields,
     (EventType.RUN_CREATED, 4): _added_defaulted_fields,
     (EventType.CONTEXT_ASSEMBLED, 1): _added_defaulted_fields,
+    (EventType.RUN_CREATED, 5): _added_defaulted_fields,
 }
 
 
