@@ -3,6 +3,7 @@ after a restart, the run index, and live observation."""
 
 import asyncio
 from pathlib import Path
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
@@ -186,3 +187,36 @@ async def test_watching_a_run_waiting_for_approval_sends_heartbeats(
     stream = platform.watch(admin, waiting.run_id, after=waiting.turns and 10_000, heartbeat=0.01)
     assert await anext(stream) is None
     await stream.aclose()
+
+
+async def test_a_run_stopped_by_shutdown_mid_model_call_resumes_after_restart(
+    tmp_path: Path, platform: Platform, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hollis.adapters.demo_model import DemoModelProvider
+
+    admin = await platform.local_admin()
+    await platform.create_starter(admin)
+    entered = asyncio.Event()
+    original = DemoModelProvider.generate
+
+    async def hangs_once(self: DemoModelProvider, request: Any) -> Any:
+        if not entered.is_set():
+            entered.set()
+            await asyncio.sleep(3600)  # the process stops while this call is in flight
+        return await original(self, request)
+
+    monkeypatch.setattr(DemoModelProvider, "generate", hangs_once)
+    started = await platform.start_run(admin, StartRun(input="list files"))
+    await asyncio.wait_for(entered.wait(), timeout=10)
+    await platform.close()  # shutdown: the supervisor cancels the task; the log keeps the intent
+
+    reopened = await Platform.open(tmp_path)
+    try:
+        assert await reopened.ws.recover() == [started.run_id]
+        done = await reopened.wait_run(admin, started.run_id, timeout_s=10)
+        assert done.phase is RunPhase.COMPLETED
+        detail = await reopened.run(admin, started.run_id)
+        failed = [a for a in detail.turns[0].model_call.attempts if a.outcome == "failed"]
+        assert [a.failure_kind for a in failed] == ["interrupted"], "the interruption is recorded"
+    finally:
+        await reopened.close()
