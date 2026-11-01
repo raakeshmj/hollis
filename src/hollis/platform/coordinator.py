@@ -51,9 +51,11 @@ def plan_input(objective: str, plan: Plan) -> str:
 
 
 def read_plan(text: str) -> Plan | None:
-    match = _PLAN.search(text)
-    if match is None:
+    """The plan `plan_input` appended: the last plan block (the objective cannot hold one)."""
+    matches = list(_PLAN.finditer(text))
+    if not matches:
         return None
+    match = matches[-1]
     try:
         return Plan.model_validate_json(match.group(1))
     except ValidationError:

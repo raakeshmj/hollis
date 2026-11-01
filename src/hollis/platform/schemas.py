@@ -14,7 +14,7 @@ from uuid import UUID
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 from hollis.runtime.context import CompactionSummary, ContextPolicy, TokenAccounting
-from hollis.runtime.delegation import Assignment, DelegationLimits
+from hollis.runtime.delegation import Assignment, DelegationLimits, DelegationOverrides
 from hollis.runtime.grounding import GroundingReport
 from hollis.runtime.knowledge import KnowledgeAccess, RetrievedPassage, SourceTrust
 from hollis.runtime.memory import Certainty, MemoryAccess, MemoryKind, RecalledMemory
@@ -236,8 +236,9 @@ class AgentInput(_Input):
     record_episodes: bool = False
     delegates: tuple[str, ...] = Field(default=(), max_length=16)
     """Agents this agent may delegate bounded tasks to (one `delegate_<agent>` tool each)."""
-    delegation: DelegationLimits | None = None
-    """Narrows the workspace's delegation limits for runs of this agent and below."""
+    delegation: DelegationOverrides | None = None
+    """Narrows the workspace's delegation limits for runs of this agent and below; fields not
+    set inherit them."""
 
 
 class Agent(AgentInput):

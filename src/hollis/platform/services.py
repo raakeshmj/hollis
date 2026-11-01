@@ -564,6 +564,7 @@ class Platform:
         if spec.name != name:
             raise InvalidRequest("an agent cannot be renamed; create a new one")
         await self._validate_agent(spec)
+        await self._refuse_if_delegations_change(name, spec)
         agent = Agent(
             **spec.model_dump(),
             created_at=current.created_at,
@@ -584,6 +585,7 @@ class Platform:
         users = [a.name for a in self.ws.agents.values() if name in a.delegates and a.name != name]
         if users:
             raise Conflict(f"agents delegate to {name!r}: {', '.join(users)}")
+        await self._refuse_if_delegations_change(name, None)
         if not await self.ws.db.execute("DELETE FROM agents WHERE name = ?", (name,)):
             raise NotFound(f"no agent {name!r}")
         await self.ws.load_agents()
@@ -642,6 +644,38 @@ class Platform:
         if deployment.locality not in self.ws.config.routing.allowed_localities:
             raise InvalidRequest(
                 f"model: routing policy does not allow {deployment.locality.value} deployments"
+            )
+
+    async def _refuse_if_delegations_change(self, name: str, spec: AgentInput | None) -> None:
+        """A run records the identity of every tool it may call, delegate tools included, and
+        refuses to continue if one changes (ADR-0014). So an agent edit that would change any
+        delegate tool's identity (its description, or the effect it can reach) waits until no
+        unfinished run uses that tool. `spec` None: the agent is being deleted."""
+        before = {n: t.descriptor.ref for n, t in self.ws.delegate_tools.items()}
+        if spec is None:
+            changed = {delegate_tool_name(name)}
+        else:
+            agents = dict(self.ws.agents)
+            current = agents[name]
+            agents[name] = current.model_copy(update=spec.model_dump())
+            changed = {
+                tool
+                for tool, ref in self.ws.preview_delegations(agents).items()
+                if before.get(tool) not in (None, ref)
+            }
+        if not changed:
+            return
+        rows, _ = await self.ws.db.index_list(owner=None, limit=10_000)
+        busy: set[str] = set()
+        for row in rows:
+            if row["status"] in TERMINAL_STATUSES:
+                continue
+            state = await load_run(self.ws.runs, row["run_id"])
+            busy |= changed & {t.name for t in state.tools}
+        if busy:
+            raise Conflict(
+                f"unfinished runs use {', '.join(sorted(busy))}, which this change would alter; "
+                "let them finish or cancel them first"
             )
 
     def _mcp_tool(self, name: str) -> bool:
@@ -715,6 +749,8 @@ class Platform:
         """A root run on the deterministic workflow coordinator whose only tools delegate to
         the plan's agents. Its access is the union of what those agents may use, within the
         caller's grants, so each step can still narrow to its own agent's configuration."""
+        if "```hollis-plan" in spec.input:
+            raise InvalidRequest("a plan run's input cannot contain a hollis-plan block")
         agents: list[Agent] = []
         for name in dict.fromkeys(step.agent for step in plan.steps):
             agents.append(await self.agent(p, name))
@@ -942,13 +978,8 @@ class Platform:
         react to its children's cancellation by delegating again."""
         row = await self._require_run(p, run_id)
         _owner_or_admin(p, row)
-        await self.ws.supervisor.cancel(run_id, by=p.name, reason=spec.reason)
-        cascaded = 0
-        for child in await self.ws.orchestrator.descendants(run_id):
-            reason = f"run {run_id} that delegated it was cancelled"
-            state = await self.ws.supervisor.cancel(child, by=p.name, reason=reason)
-            cascaded += state.cancellation is not None and state.cancellation.by == p.name
-        detail_text = spec.reason + (f" (and {cascaded} delegated runs)" if cascaded else "")
+        await self.ws.orchestrator.cancel_tree(run_id, by=p.name, reason=spec.reason)
+        detail_text = spec.reason + (" (and the runs it delegated)" if row["children"] else "")
         await self.ws.db.audit(p.name, "run.cancel", str(run_id), detail_text)
         return await self._summary(run_id)
 

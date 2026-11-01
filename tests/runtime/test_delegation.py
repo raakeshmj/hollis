@@ -12,6 +12,7 @@ from hollis.adapters.memory_store import InMemoryRunStore
 from hollis.runtime.delegation import (
     Assignment,
     DelegationLimits,
+    DelegationOverrides,
     Lineage,
     child_run_id,
 )
@@ -79,6 +80,14 @@ def test_limits_narrow_field_by_field_and_never_widen() -> None:
         max_depth=3, max_children=4, max_runs=4, token_budget=5000, wait_s=60
     )
     assert parent.narrow(None) == parent
+
+
+def test_overrides_narrow_only_the_fields_they_set() -> None:
+    workspace = DelegationLimits(max_depth=4, max_runs=100, wait_s=3000)
+    narrowed = workspace.narrow(DelegationOverrides(token_budget=200_000, max_runs=500))
+    assert narrowed == DelegationLimits(
+        max_depth=4, max_runs=100, wait_s=3000, token_budget=200_000
+    ), "unset fields inherit, and a larger value never widens"
 
 
 def test_run_created_v5_payloads_upcast_without_lineage() -> None:

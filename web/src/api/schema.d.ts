@@ -902,7 +902,7 @@ export interface components {
              * @default []
              */
             delegates: string[];
-            delegation?: components["schemas"]["DelegationLimits"] | null;
+            delegation?: components["schemas"]["DelegationOverrides"] | null;
             /**
              * Description
              * @default
@@ -964,7 +964,7 @@ export interface components {
              * @default []
              */
             delegates: string[];
-            delegation?: components["schemas"]["DelegationLimits"] | null;
+            delegation?: components["schemas"]["DelegationOverrides"] | null;
             /**
              * Description
              * @default
@@ -1419,6 +1419,23 @@ export interface components {
              * @default 900
              */
             wait_s: number;
+        };
+        /**
+         * DelegationOverrides
+         * @description An agent's own delegation limits: each set field narrows the workspace's (or the
+         *     delegating run's) limit; unset fields inherit it.
+         */
+        DelegationOverrides: {
+            /** Max Children */
+            max_children?: number | null;
+            /** Max Depth */
+            max_depth?: number | null;
+            /** Max Runs */
+            max_runs?: number | null;
+            /** Token Budget */
+            token_budget?: number | null;
+            /** Wait S */
+            wait_s?: number | null;
         };
         /**
          * DeploymentInput

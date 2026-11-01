@@ -8,7 +8,7 @@ from hollis.platform.auth import Principal
 from hollis.platform.schemas import AgentInput, CollectionInput, StartRun
 from hollis.platform.services import Platform
 from hollis.runtime.conversation import ToolCall, ToolResultsTurn
-from hollis.runtime.delegation import DelegationLimits
+from hollis.runtime.delegation import DelegationOverrides
 from hollis.runtime.knowledge import KnowledgeAccess
 from hollis.runtime.model import (
     DeploymentDescriptor,
@@ -97,7 +97,7 @@ async def add_team(
     admin: Principal,
     *,
     lead_tools: tuple[str, ...] = (),
-    delegation: DelegationLimits | None = None,
+    delegation: DelegationOverrides | None = None,
 ) -> None:
     """Collections docs and finance; agents researcher (docs), analyst (finance), reviewer,
     writer (file writes) and lead, which may delegate to all of them."""

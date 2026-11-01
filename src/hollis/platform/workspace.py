@@ -17,6 +17,7 @@ import asyncio
 import contextlib
 import logging
 import os
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -46,7 +47,7 @@ from hollis.runtime.model import ModelProvider
 from hollis.runtime.runner import Runner
 from hollis.runtime.state import RunState, fold
 from hollis.runtime.store import load_run
-from hollis.runtime.tools import Tool, ToolEffect
+from hollis.runtime.tools import Tool, ToolEffect, ToolRef
 from hollis.tools import CallbackApprover, Rule, RulePolicy, ToolRegistry
 from hollis.tools.builtin import artifact_tools, filesystem_tools
 from hollis.tools.mcp_config import McpServerConfig
@@ -232,11 +233,19 @@ class Workspace:
 
     def refresh_delegations(self) -> None:
         """One delegate tool per agent; its effect is the strongest its delegation can cause."""
-        self.delegate_tools = {}
-        for agent in self.agents.values():
-            effect = delegation_effect(agent.name, self.agents, self._tool_effect)
+        self.delegate_tools = self._delegate_tools(self.agents)
+
+    def preview_delegations(self, agents: Mapping[str, Agent]) -> dict[str, ToolRef]:
+        """The delegate tool identities a set of agent definitions would produce."""
+        return {name: tool.descriptor.ref for name, tool in self._delegate_tools(agents).items()}
+
+    def _delegate_tools(self, agents: Mapping[str, Agent]) -> dict[str, DelegateTool]:
+        tools: dict[str, DelegateTool] = {}
+        for agent in agents.values():
+            effect = delegation_effect(agent.name, agents, self._tool_effect)
             tool = DelegateTool(self.orchestrator, agent, effect)
-            self.delegate_tools[tool.descriptor.name] = tool
+            tools[tool.descriptor.name] = tool
+        return tools
 
     def _tool_effect(self, name: str) -> ToolEffect | None:
         if name.startswith("mcp_"):
@@ -337,10 +346,11 @@ class Workspace:
     # --- run index ------------------------------------------------------------------------------
 
     async def _observe(self, event: EventEnvelope, state: RunState) -> None:
-        await self._index(event, state)
-        if isinstance(event.payload, _CALL_ENDED) or state.status.is_terminal:
-            # After indexing, so the call's usage counts before its reservation is released.
-            self.orchestrator.release(state.run_id)
+        try:
+            await self._index(event, state)
+        finally:  # after indexing, so the call's usage counts before its reservation goes
+            if isinstance(event.payload, _CALL_ENDED) or state.status.is_terminal:
+                self.orchestrator.release(state.run_id)
         if state.status.is_terminal and event.sequence == state.version:
             await self._record_episode(state)
 

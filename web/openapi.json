@@ -53,7 +53,7 @@
           "delegation": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/DelegationLimits"
+                "$ref": "#/components/schemas/DelegationOverrides"
               },
               {
                 "type": "null"
@@ -181,7 +181,7 @@
           "delegation": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/DelegationLimits"
+                "$ref": "#/components/schemas/DelegationOverrides"
               },
               {
                 "type": "null"
@@ -1206,6 +1206,78 @@
           }
         },
         "title": "DelegationLimits",
+        "type": "object"
+      },
+      "DelegationOverrides": {
+        "additionalProperties": false,
+        "description": "An agent's own delegation limits: each set field narrows the workspace's (or the\ndelegating run's) limit; unset fields inherit it.",
+        "properties": {
+          "max_children": {
+            "anyOf": [
+              {
+                "maximum": 64.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Children"
+          },
+          "max_depth": {
+            "anyOf": [
+              {
+                "maximum": 5.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Depth"
+          },
+          "max_runs": {
+            "anyOf": [
+              {
+                "maximum": 500.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Runs"
+          },
+          "token_budget": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token Budget"
+          },
+          "wait_s": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 3500.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wait S"
+          }
+        },
+        "title": "DelegationOverrides",
         "type": "object"
       },
       "DeploymentInput": {

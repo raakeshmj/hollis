@@ -20,7 +20,7 @@ import type {
   OrchestrationView,
   PrincipalView,
   ProbeResult,
-  DelegationLimits,
+  DelegationOverrides,
   RunDetail,
   RunPage,
   RunPhase,
@@ -261,8 +261,8 @@ export type AgentDraft = {
   budget: { max_output_tokens: number } | null;
   record_episodes: boolean;
   delegates: string[];
-  /** Narrows the workspace's delegation limits; null keeps them. */
-  delegation: Partial<DelegationLimits> | null;
+  /** Narrows the workspace's delegation limits (unset fields inherit); null keeps them. */
+  delegation: DelegationOverrides | null;
 };
 
 export function useSaveAgent() {

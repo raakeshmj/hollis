@@ -10,6 +10,7 @@ export type ArtifactView = S["ArtifactView"];
 export type CollectionView = S["CollectionView"];
 export type CreatedToken = S["CreatedToken"];
 export type DelegationLimits = S["DelegationLimits"];
+export type DelegationOverrides = S["DelegationOverrides"];
 export type DisagreementView = S["DisagreementView"];
 export type DeploymentView = S["DeploymentView"];
 export type EventView = S["EventView"];

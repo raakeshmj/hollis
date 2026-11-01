@@ -124,7 +124,7 @@ def agents_show(state: State, name: str) -> None:
                     "delegation",
                     ", ".join(
                         f"{k.replace('_', ' ')} {v}"
-                        for k, v in agent.delegation.model_dump(exclude_defaults=True).items()
+                        for k, v in agent.delegation.model_dump(exclude_none=True).items()
                     )
                     or "workspace limits"
                     if agent.delegation

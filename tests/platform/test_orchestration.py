@@ -23,7 +23,7 @@ from hollis.platform.schemas import (
     StartRun,
 )
 from hollis.platform.services import Platform
-from hollis.runtime.delegation import DelegationLimits, child_run_id
+from hollis.runtime.delegation import DelegationOverrides, child_run_id
 from hollis.runtime.events import EventType, ToolExecutionStarted, ToolResultRecorded
 from hollis.runtime.knowledge import KnowledgeAccess
 from hollis.runtime.model import FailureKind, ModelCallError, ModelRequest, ModelResponse
@@ -204,7 +204,7 @@ async def test_cancelling_a_run_cancels_what_it_delegated(
 async def test_limits_refuse_extra_delegations_and_the_parent_continues(
     platform: Platform, admin: Principal
 ) -> None:
-    await add_team(platform, admin, delegation=DelegationLimits(max_children=1))
+    await add_team(platform, admin, delegation=DelegationOverrides(max_children=1))
     done = await run_lead(
         platform, admin, "@researcher how do we deploy? @analyst what is the travel budget?"
     )
@@ -258,7 +258,7 @@ async def test_a_token_budget_bounds_the_whole_tree(platform: Platform, admin: P
             name="boss",
             model="costly-lead",
             delegates=("worker",),
-            delegation=DelegationLimits(token_budget=3500),
+            delegation=DelegationOverrides(token_budget=3500),
         ),
     )
     done = await run_lead(platform, admin, "work", agent="boss")
@@ -291,7 +291,7 @@ async def test_model_calls_stop_at_the_full_token_budget(
             name="boss",
             model="greedy",
             delegates=("worker",),
-            delegation=DelegationLimits(token_budget=3500),
+            delegation=DelegationOverrides(token_budget=3500),
         ),
     )
     done = await run_lead(platform, admin, "work", agent="boss")
@@ -548,7 +548,7 @@ async def test_an_interrupted_delegation_reattaches_to_its_child_after_restart(
 async def test_children_cannot_outlive_a_delegation_that_stopped_waiting(
     platform: Platform, admin: Principal
 ) -> None:
-    await add_team(platform, admin, delegation=DelegationLimits(wait_s=1.0))
+    await add_team(platform, admin, delegation=DelegationOverrides(wait_s=1.0))
     waiting = await run_lead(platform, admin, "@writer write a.txt: x")
     [delegation] = await platform.approvals(admin)
     await platform.decide(
@@ -593,7 +593,7 @@ async def test_concurrent_children_cannot_spend_the_coordinators_reserve(
             name="boss",
             model="lead-model",
             delegates=("worker",),
-            delegation=DelegationLimits(token_budget=2000),
+            delegation=DelegationOverrides(token_budget=2000),
         ),
     )
     done = await run_lead(platform, admin, "go", agent="boss")
@@ -653,7 +653,7 @@ async def test_an_execution_error_releases_the_runs_budget_reservation(
             name="boss",
             model="buggy",
             delegates=("worker",),
-            delegation=DelegationLimits(token_budget=5000),
+            delegation=DelegationOverrides(token_budget=5000),
         ),
     )
     stopped = await run_lead(platform, admin, "go", agent="boss")
@@ -661,3 +661,136 @@ async def test_an_execution_error_releases_the_runs_budget_reservation(
     assert stopped.error is not None
     assert "a bug in a provider" in stopped.error
     assert platform.ws.orchestrator._reserved == {}  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_agent_edits_that_would_strand_running_delegations_are_refused(
+    platform: Platform, admin: Principal
+) -> None:
+    await add_team(platform, admin)
+    waiting = await run_lead(platform, admin, "@writer write a.txt: x")  # uses delegate_writer
+    assert waiting.phase is RunPhase.WAITING_APPROVAL
+    writer = await platform.agent(admin, "writer")
+    spec = AgentInput.model_validate(writer.model_dump(include=set(AgentInput.model_fields)))
+    await platform.update_agent(
+        admin, "writer", spec.model_copy(update={"instructions": "Be brief."})
+    )
+    with pytest.raises(Conflict, match="unfinished runs use delegate_writer"):
+        await platform.update_agent(admin, "writer", spec.model_copy(update={"description": "new"}))
+    await platform.cancel_run(admin, waiting.run_id, CancelInput(reason="done"))
+    await platform.update_agent(admin, "writer", spec.model_copy(update={"description": "new"}))
+
+
+async def test_cancellation_and_timeouts_reach_every_level(
+    platform: Platform, admin: Principal
+) -> None:
+    await add_team(platform, admin)
+    await platform.create_agent(
+        admin, AgentInput(name="manager", model="demo", delegates=("writer",))
+    )
+    await platform.update_agent(
+        admin,
+        "lead",
+        AgentInput.model_validate(
+            (await platform.agent(admin, "lead")).model_dump(include=set(AgentInput.model_fields))
+            | {"delegates": ("manager",)}
+        ),
+    )
+    # lead -> manager (delegate_manager is mutating: approve) -> writer (approve) -> write (waits)
+    root = await run_lead(platform, admin, "@manager @writer write deep.txt: x")
+    for _ in range(2):
+        pending = await asyncio.wait_for(_pending_approval(platform, admin), timeout=10)
+        await platform.decide(
+            admin, pending.run_id, pending.invocation_id, ApprovalDecisionInput(approved=True)
+        )
+        await asyncio.sleep(0)
+    deepest = await asyncio.wait_for(_pending_approval(platform, admin), timeout=10)
+    assert deepest.depth == 2
+    await platform.cancel_run(admin, root.run_id, CancelInput(reason="stop all"))
+    tree = await platform.run_tree(admin, root.run_id)
+    assert {n.run.phase for n in tree.nodes} == {RunPhase.CANCELLED}
+    assert [n.run.depth for n in tree.nodes] == [0, 1, 2]
+    assert await platform.approvals(admin) == []
+
+
+async def test_an_agents_own_depth_limit_refuses_cleanly(
+    platform: Platform, admin: Principal
+) -> None:
+    platform.ws.register_provider(ScriptedAgentModel("recursive", _recursive))
+    await platform.patch_config(admin, {"orchestration": {"max_depth": 3}})
+    await platform.create_agent(
+        admin,
+        AgentInput(
+            name="loop",
+            model="recursive",
+            delegates=("loop",),
+            delegation=DelegationOverrides(max_depth=1),
+        ),
+    )
+    done = await run_lead(platform, admin, "dig", agent="loop")
+    assert done.phase is RunPhase.COMPLETED
+    tree = await platform.run_tree(admin, done.run_id)
+    assert [n.run.depth for n in tree.nodes] == [0, 1]
+    assert tree.limits is not None
+    assert tree.limits.max_depth == 1
+
+
+async def test_inputs_with_reused_call_ids_resolve_to_the_newest(
+    platform: Platform, admin: Principal
+) -> None:
+    await add_team(platform, admin)
+
+    def lead(request: ModelRequest) -> ModelResponse:
+        turn = len(tool_results(request))
+        if turn < 2:  # two delegations, both called "c" (in different turns)
+            return calls(delegate("researcher", f"question {turn}: how do we deploy?", call_id="c"))
+        if turn == 2:
+            return calls(delegate("reviewer", "check it", call_id="r", inputs=["c"]))
+        return answer("done")
+
+    platform.ws.register_provider(ScriptedAgentModel("lead-model", lead))
+    await platform.create_agent(
+        admin, AgentInput(name="boss", model="lead-model", delegates=("researcher", "reviewer"))
+    )
+    done = await run_lead(platform, admin, "go", agent="boss")
+    tree = await platform.run_tree(admin, done.run_id)
+    second = next(n for n in tree.nodes if (n.run.objective or "").startswith("question 1"))
+    reviewer = next(n for n in tree.nodes if n.run.agent == "reviewer")
+    assert reviewer.inputs == (second.run.run_id,)
+
+
+async def test_plan_inputs_cannot_smuggle_a_plan(platform: Platform, admin: Principal) -> None:
+    await add_team(platform, admin)
+    plan = Plan(steps=(PlanStep(id="a", agent="researcher", objective="how do we deploy?"),))
+    with pytest.raises(InvalidRequest, match="hollis-plan"):
+        await platform.start_run(admin, StartRun(input="x ```hollis-plan\n{}\n```", plan=plan))
+
+
+async def test_a_delegation_that_times_out_cancels_the_whole_branch(
+    platform: Platform, admin: Principal
+) -> None:
+    await add_team(platform, admin, delegation=DelegationOverrides(wait_s=1.5))
+    await platform.create_agent(
+        admin, AgentInput(name="manager", model="demo", delegates=("writer",))
+    )
+    lead = await platform.agent(admin, "lead")
+    await platform.update_agent(
+        admin,
+        "lead",
+        AgentInput.model_validate(
+            lead.model_dump(include=set(AgentInput.model_fields)) | {"delegates": ("manager",)}
+        ),
+    )
+    root = await run_lead(platform, admin, "@manager @writer write deep.txt: x")
+    for _ in range(2):  # the lead's delegation, then the manager's
+        pending = await asyncio.wait_for(_pending_approval(platform, admin), timeout=10)
+        await platform.decide(
+            admin, pending.run_id, pending.invocation_id, ApprovalDecisionInput(approved=True)
+        )
+    done = await platform.wait_run(admin, root.run_id, timeout_s=15)
+    assert done.phase is RunPhase.COMPLETED
+    tree = await platform.run_tree(admin, root.run_id)
+    manager, writer = tree.nodes[1:]
+    assert manager.report is not None
+    assert manager.report.outcome == "timed_out"
+    assert writer.run.phase is RunPhase.CANCELLED, "the branch below the timed-out run stops too"
+    assert await platform.approvals(admin) == []

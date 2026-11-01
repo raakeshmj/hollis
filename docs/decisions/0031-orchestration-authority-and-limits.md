@@ -23,7 +23,7 @@ Delegation multiplies everything an agent can do: more model calls, more tool ca
 - `token_budget` for the tree;
 - `wait_s`, also capped by the parent's deadline.
 
-A child's limits are its parent's, narrowed field by field by its agent's.
+A child's limits are its parent's, narrowed field by field by its agent's overrides: only the fields an agent sets narrow; unset fields inherit.
 
 **Token budgets apply to subtrees, with a reserve:**
 - **The guard:** a `ModelCallGuard` (a runtime port the platform implements) is asked before every model call in a tree. It refuses (fail closed) once a budget on the run's path is used up; the run fails with `budget_exhausted`, explained.
@@ -32,7 +32,7 @@ A child's limits are its parent's, narrowed field by field by its agent's.
 - **Per run:** `RunBudget.max_total_tokens` caps one run, enforced by the runner and the fold.
 
 **No orphans, no silent loss:**
-- Cancelling a run cancels its descendants, the run itself first.
+- Cancelling a run cancels its descendants top-down, each run before its children, so no run reacts by delegating again. A delegation that stops waiting cancels the child's whole branch, and recovery cancels runs whose parent already finished.
 - A child that cannot finish within the wait limit, or whose execution stopped unexpectedly, is cancelled, and its parent gets a report saying why.
 - Tool calls with unknown outcome anywhere below a run are listed in its report.
 - Nothing claims exactly-once execution.
@@ -57,6 +57,7 @@ A child's limits are its parent's, narrowed field by field by its agent's.
 - **Costs:**
   - Orchestrator agents must be configured with the access their specialists need, or children get none. The narrowing is shown, not hidden.
   - Approval-required delegations add a human step.
+- An agent edit that would change a delegate tool's identity (its description, or the effect it can reach) is refused while unfinished runs use that tool, because those runs could not resume.
   - Budgets are checked against provider-reported usage after each call and estimates before it, so they are bounds, not exact meters.
 
 ## Consequences

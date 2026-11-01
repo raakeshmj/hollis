@@ -26,7 +26,7 @@ from hollis.platform.schemas import (
 )
 from hollis.platform.services import Platform
 from hollis.runtime.context import ContextPolicy
-from hollis.runtime.delegation import DelegationLimits
+from hollis.runtime.delegation import DelegationOverrides
 from hollis.runtime.events import ModelCallFailed, ModelCallStarted
 from hollis.runtime.grounding import Support
 from hollis.runtime.knowledge import KnowledgeAccess
@@ -98,7 +98,7 @@ class Bench:
         description: str = "",
         delegates: tuple[str, ...] = (),
         turns: int = 8,
-        delegation: DelegationLimits | None = None,
+        delegation: DelegationOverrides | None = None,
     ) -> None:
         await self.platform.create_agent(
             self.admin,
@@ -523,7 +523,7 @@ async def budget_exhaustion(root: Path, unconstrained_tokens: int) -> list[Outco
         "sim-lead",
         collections=DOMAINS,
         delegates=tuple(f"{d}-specialist" for d in DOMAINS),
-        delegation=DelegationLimits(token_budget=budget),
+        delegation=DelegationOverrides(token_budget=budget),
     )
     try:
         outcome = await bench.run(

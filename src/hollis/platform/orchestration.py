@@ -148,13 +148,6 @@ def delegate_tool_name(agent: str) -> str:
     return DELEGATE_PREFIX + agent.replace("-", "_")
 
 
-def delegated_agent(tool: str) -> str | None:
-    """The agent a delegate tool targets (agent names never contain underscores)."""
-    if not tool.startswith(DELEGATE_PREFIX):
-        return None
-    return tool.removeprefix(DELEGATE_PREFIX).replace("_", "-")
-
-
 def _now() -> datetime:
     return datetime.now(UTC)
 
@@ -287,7 +280,8 @@ class DelegateTool:
 # --- reports -----------------------------------------------------------------------------------
 
 
-_SELF_REPORT = re.compile(r"```json\s*(\{.*?\})\s*```\s*$", re.S)
+_SELF_REPORT = re.compile(r"```json\s*(\{(?:(?!```).)*\})\s*```\s*$", re.S)
+"""The final ```json block of an answer (never one spanning earlier code blocks)."""
 _STATUSES = ("done", "partial", "blocked", "needs_input")
 _CONFIDENCE = ("high", "medium", "low")
 
@@ -694,6 +688,8 @@ class Orchestrator:
         memory, lost_memory = narrow_memory(agent.memory, memory_ceiling)
         knowledge, lost_knowledge = narrow_knowledge(agent.knowledge, knowledge_ceiling)
         child_limits = limits.narrow(agent.delegation)
+        if depth > child_limits.max_depth:
+            return f"the {agent.name} agent's own limits allow depth {child_limits.max_depth}"
         tools = (*agent.tools, *self.tool_names(agent, depth=depth, limits=child_limits))
         budget = agent.budget or RunBudget(max_output_tokens=ws.config.runtime.max_output_tokens)
         if parent.deadline is not None:
@@ -772,10 +768,10 @@ class Orchestrator:
         inputs: list[InputRef] = []
         evidence: dict[str, Evidence] = {}
         for ref in dict.fromkeys(refs):
-            match = next(
+            match = next(  # newest first: providers may reuse call ids across turns
                 (
                     i
-                    for i in finished
+                    for i in reversed(finished)
                     if ref
                     in (
                         i.call.call_id,
@@ -838,14 +834,14 @@ class Orchestrator:
                     names = ", ".join(i.call.name for i in state.awaiting_approval)
                     waiting = f" while it waited for approval of {names}"
                 reason = f"the delegating run stopped waiting after {limit:.0f}s{waiting}"
-                return await ws.supervisor.cancel(child_id, by="hollis", reason=reason), True
+                return await self.cancel_tree(child_id, by="hollis", reason=reason), True
             active = ws.supervisor.active(child_id)
             if not active and not state.awaiting_approval:
                 row = await ws.db.index_get(child_id)
                 stopped = row["data"].get("stopped") if row else None
                 if stopped:
                     reason = f"its execution stopped unexpectedly ({stopped})"
-                    return await ws.supervisor.cancel(child_id, by="hollis", reason=reason), False
+                    return await self.cancel_tree(child_id, by="hollis", reason=reason), False
                 active = ws.supervisor.schedule(child_id) or ws.supervisor.active(child_id)
             await ws.bus.wait_until(
                 _progressed(ws, child_id, state.version, active), min(remaining, POLL_S)
@@ -879,20 +875,23 @@ class Orchestrator:
 
     # --- cancellation ---------------------------------------------------------------------------
 
-    async def descendants(self, run_id: UUID) -> list[UUID]:
-        """Every run delegated below `run_id`, deepest first."""
-        levels: list[list[UUID]] = []
+    async def cancel_tree(self, run_id: UUID, *, by: str, reason: str) -> RunState:
+        """Cancel a run, then everything it delegated, top-down: a run is stopped before its
+        children are, so it cannot react to their cancellation by delegating again. Children
+        are read after their parent stopped, so none created meanwhile is missed."""
+        ws = self._ws
+        state = await ws.supervisor.cancel(run_id, by=by, reason=reason)
         frontier = [run_id]
         while frontier:
-            children = [
-                row["run_id"]
-                for parent in frontier
-                for row in await self._ws.db.index_children(parent)
-            ]
-            if children:
-                levels.append(children)
-            frontier = children
-        return [run for level in reversed(levels) for run in level]
+            stopped: list[UUID] = []
+            for parent in frontier:
+                for row in await ws.db.index_children(parent):
+                    if row["status"] not in ("completed", "failed", "cancelled"):
+                        because = f"run {run_id} above it was cancelled: {reason}"[:2000]
+                        await ws.supervisor.cancel(row["run_id"], by=by, reason=because)
+                    stopped.append(row["run_id"])
+            frontier = stopped
+        return state
 
     # --- views ----------------------------------------------------------------------------------
 

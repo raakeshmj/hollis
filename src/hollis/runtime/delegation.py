@@ -84,18 +84,34 @@ class DelegationLimits(_Frozen):
     wait_s: float = Field(default=900.0, gt=0, le=3500)
     """How long a parent waits for one child (also capped by the parent's deadline)."""
 
-    def narrow(self, other: "DelegationLimits | None") -> "DelegationLimits":
-        """The stricter of two limit sets, field by field."""
+    def narrow(self, other: "DelegationLimits | DelegationOverrides | None") -> "DelegationLimits":
+        """The stricter of these limits and `other`, field by field. An override narrows only
+        the fields it sets."""
         if other is None:
             return self
         budgets = [b for b in (self.token_budget, other.token_budget) if b is not None]
+
+        def pick[T: (int, float)](mine: T, theirs: T | None) -> T:
+            return mine if theirs is None else min(mine, theirs)
+
         return DelegationLimits(
-            max_depth=min(self.max_depth, other.max_depth),
-            max_children=min(self.max_children, other.max_children),
-            max_runs=min(self.max_runs, other.max_runs),
+            max_depth=pick(self.max_depth, other.max_depth),
+            max_children=pick(self.max_children, other.max_children),
+            max_runs=pick(self.max_runs, other.max_runs),
             token_budget=min(budgets) if budgets else None,
-            wait_s=min(self.wait_s, other.wait_s),
+            wait_s=pick(self.wait_s, other.wait_s),
         )
+
+
+class DelegationOverrides(_Frozen):
+    """An agent's own delegation limits: each set field narrows the workspace's (or the
+    delegating run's) limit; unset fields inherit it."""
+
+    max_depth: int | None = Field(default=None, ge=0, le=MAX_DEPTH)
+    max_children: int | None = Field(default=None, ge=0, le=64)
+    max_runs: int | None = Field(default=None, ge=1, le=500)
+    token_budget: int | None = Field(default=None, ge=1)
+    wait_s: float | None = Field(default=None, gt=0, le=3500)
 
 
 def child_run_id(parent_run_id: UUID, invocation_id: str) -> UUID:
