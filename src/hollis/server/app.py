@@ -115,7 +115,7 @@ SECURITY_HEADERS = (
 )
 
 NOT_BUILT = """<!doctype html><html lang="en"><meta charset="utf-8"><title>Hollis</title>
-<body style="font: 16px/1.5 system-ui; margin: 4rem auto; max-width: 36rem; padding: 0 1rem">
+<body>
 <h1>Hollis</h1><p>The API is running at <code>/v1</code> (see <code>/v1/openapi.json</code>).
 The web application has not been built into this installation; see docs/guides/web.md.</p>
 </body></html>"""
@@ -285,6 +285,12 @@ async def settings(platform: Plat, caller: Caller) -> SettingsView:
 async def update_config(config: dict[str, Any], platform: Plat, caller: Caller) -> SettingsView:
     """Replace the workspace configuration (admin). Validated before anything is saved."""
     return await platform.update_config(caller, config)
+
+
+@api.patch("/settings/config", tags=["system"])
+async def patch_config(changes: dict[str, Any], platform: Plat, caller: Caller) -> SettingsView:
+    """Change some settings (admin): merged into what hollis.toml sets, validated, applied."""
+    return await platform.patch_config(caller, changes)
 
 
 @api.get("/audit", tags=["system"])

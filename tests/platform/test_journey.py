@@ -98,6 +98,8 @@ async def test_question_is_answered_from_knowledge_with_citations(
     assert "make ship" in detail.answer
     assert "[C-" in detail.answer
     assert detail.grounding is not None
+    supported = [c for c in detail.grounding.claims if c.support.value == "supported"]
+    assert supported, "the demo cites inside the sentence, so grounding can verify it"
     search = await platform.search(admin, SearchInput(query="deploy command"))
     assert search.hits[0].source_key == "HANDBOOK.md"
 

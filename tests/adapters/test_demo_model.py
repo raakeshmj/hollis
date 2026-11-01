@@ -100,9 +100,9 @@ async def test_tool_results_are_reported_with_knowledge_handles() -> None:
 
     assert response.stop_reason is StopReason.END_TURN
     assert response.content.splitlines() == [
-        "[demo] Here is what the tools returned:",
-        "- Roll back with `make rollback`. [C-0000beef]",
-        "- The on-call engineer approves rollbacks. [C-0000cafe]",
+        "[demo] From the tools:",
+        "- Roll back with `make rollback` [C-0000beef].",
+        "- The on-call engineer approves rollbacks [C-0000cafe].",
     ]
     assert "C-1a2b3c4d" not in response.content, "the example handle in the notice is not a passage"
 
@@ -133,7 +133,7 @@ async def test_knowledge_in_context_is_quoted_with_citation_keys() -> None:
     response = await DemoModelProvider().generate(
         _request("Tell me about deploys", tools=(), context=(block,))
     )
-    assert response.content.splitlines()[1] == "- Deploy with `make ship`. [S1]"
+    assert response.content.splitlines()[1] == "- Deploy with `make ship` [S1]."
 
 
 async def test_responses_are_deterministic_and_usage_is_estimated() -> None:

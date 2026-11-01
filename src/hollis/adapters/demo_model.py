@@ -86,11 +86,11 @@ class DemoModelProvider:
                 )
         passages = [b for b in request.context if b.kind is ContextKind.KNOWLEDGE]
         if passages:
-            lines = ["[demo] From the knowledge passages provided:"]
+            lines = ["[demo] From the sources:"]
             for block in passages[:3]:
                 key = block.source.split(":", 1)[1]
                 body = block.text.split("\n", 1)[1] if "\n" in block.text else block.text
-                lines.append(f"- {_first_sentence(body)} [{key}]")
+                lines.append(f"- {_cite(_first_sentence(body), key)}")
             return self._answer(request, "\n".join(lines))
         return self._answer(
             request,
@@ -127,11 +127,11 @@ class DemoModelProvider:
         return None
 
     def _report(self, results: ToolResultsTurn) -> str:
-        lines = ["[demo] Here is what the tools returned:"]
+        lines = ["[demo] From the tools:"]
         for result in results.results:
             blocks = [] if result.is_error else _BLOCK.findall(result.content)
             for handle, body in blocks[:3]:
-                lines.append(f"- {_first_sentence(body)} [{handle}]")
+                lines.append(f"- {_cite(_first_sentence(body), handle)}")
             if not blocks:
                 status = "failed" if result.is_error else "returned"
                 lines.append(f"- {result.name} {status}: {_clip(_plain(result.content), 300)}")
@@ -171,6 +171,13 @@ def _plain(text: str) -> str:
         )
     ]
     return " ".join(lines)
+
+
+def _cite(sentence: str, key: str) -> str:
+    """The citation goes inside the sentence, before its final punctuation."""
+    stripped = sentence.rstrip()
+    end = stripped[-1] if stripped and stripped[-1] in ".!?" else "."
+    return f"{stripped.rstrip('.!?')} [{key}]{end}"
 
 
 def _first_sentence(text: str) -> str:

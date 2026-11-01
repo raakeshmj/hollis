@@ -248,6 +248,13 @@ class Platform:
         await self.ws.db.audit(p.name, "config.update", "hollis.toml")
         return await self.settings(p)
 
+    async def patch_config(self, p: Principal, changes: dict[str, Any]) -> SettingsView:
+        """Merge `changes` into the settings hollis.toml sets (admin), so the file keeps only
+        what someone chose, then validate and apply like update_config."""
+        _admin(p)
+        current = self.ws.config.model_dump(mode="json", exclude_unset=True)
+        return await self.update_config(p, _merge(current, changes))
+
     # --- models ---------------------------------------------------------------------------------
 
     async def deployments(self, p: Principal) -> list[DeploymentView]:
@@ -1257,6 +1264,16 @@ def _effective_knowledge(
     collections = tuple(c for c in configured.collections if c in grant.collections)
     labels = tuple(label for label in configured.labels if label in grant.labels)
     return KnowledgeAccess(collections=collections, labels=labels) if collections else None
+
+
+def _merge(base: dict[str, Any], changes: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in changes.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _merge(merged[key], value)  # pyright: ignore[reportUnknownArgumentType]  # JSON objects
+        else:
+            merged[key] = value
+    return merged
 
 
 def _first_error(exc: ValidationError) -> str:

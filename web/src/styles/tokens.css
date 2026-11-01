@@ -1,0 +1,107 @@
+/*
+ * Hollis design tokens. Palette from the brand (brand/README.md): warm ink and paper neutrals,
+ * brass reserved for attention and focus. Text colors meet WCAG AA (4.5:1) on every surface in
+ * both themes; form-field borders and the focus ring meet 3:1 (measured; see docs/guides/web.md).
+ */
+
+:root {
+  color-scheme: light;
+
+  --font-sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  --text-xs: 0.75rem;   /* 12 */
+  --text-sm: 0.8125rem; /* 13 */
+  --text-md: 0.875rem;  /* 14: body */
+  --text-lg: 1rem;      /* 16 */
+  --text-xl: 1.375rem;  /* 22: page titles */
+
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --s6: 32px;
+  --s7: 48px;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --sidebar: 232px;
+
+  --bg: #f6f3ec;          /* paper */
+  --surface: #fcfaf5;     /* panels, inputs */
+  --sunken: #efeadf;      /* sidebar, code, tags */
+  --hover: #ebe5d8;
+  --ink: #17140f;
+  --ink-2: #4d473d;
+  --ink-3: #6b6458;
+  --rule: #e3dccd;
+  --rule-strong: #cdc4b2;
+  --field: #8a8274;       /* form borders: 3:1 on surface */
+  --brass: #b8862f;       /* marks and fills, never body text on paper */
+  --brass-text: #86621f;  /* brass as text and focus: 5.0:1 on paper */
+  --attention: #f3ebda;
+  --success: #2d6a35;
+  --success-bg: #e5eee1;
+  --danger: #a2362a;
+  --danger-bg: #f6e3dd;
+  --info: #3b5b7a;
+  --primary-bg: #17140f;
+  --primary-fg: #f6f3ec;
+  --overlay: rgb(23 20 15 / 0.32);
+  --shadow: 0 10px 30px rgb(23 20 15 / 0.14), 0 1px 3px rgb(23 20 15 / 0.08);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #12100c;
+  --surface: #1a1712;
+  --sunken: #0e0c09;
+  --hover: #221e17;
+  --ink: #eee8db;
+  --ink-2: #bdb4a3;
+  --ink-3: #958c7c;
+  --rule: #2f2a22;
+  --rule-strong: #433c31;
+  --field: #7a7262;
+  --brass: #d9a94e;
+  --brass-text: #e1b465;
+  --attention: #241d11;
+  --success: #8dc98f;
+  --success-bg: #17241a;
+  --danger: #ee8b78;
+  --danger-bg: #2c1814;
+  --info: #9db8d4;
+  --primary-bg: #eee8db;
+  --primary-fg: #12100c;
+  --overlay: rgb(0 0 0 / 0.55);
+  --shadow: 0 10px 30px rgb(0 0 0 / 0.5), 0 1px 3px rgb(0 0 0 / 0.4);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #12100c;
+    --surface: #1a1712;
+    --sunken: #0e0c09;
+    --hover: #221e17;
+    --ink: #eee8db;
+    --ink-2: #bdb4a3;
+    --ink-3: #958c7c;
+    --rule: #2f2a22;
+    --rule-strong: #433c31;
+    --field: #7a7262;
+    --brass: #d9a94e;
+    --brass-text: #e1b465;
+    --attention: #241d11;
+    --success: #8dc98f;
+    --success-bg: #17241a;
+    --danger: #ee8b78;
+    --danger-bg: #2c1814;
+    --info: #9db8d4;
+    --primary-bg: #eee8db;
+    --primary-fg: #12100c;
+    --overlay: rgb(0 0 0 / 0.55);
+    --shadow: 0 10px 30px rgb(0 0 0 / 0.5), 0 1px 3px rgb(0 0 0 / 0.4);
+  }
+}

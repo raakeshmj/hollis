@@ -169,3 +169,15 @@ async def test_agents_are_versioned_on_update(platform: Platform, admin: Princip
         await platform.update_agent(admin, "helper", spec.model_copy(update={"name": "other"}))
     with pytest.raises(Conflict):
         await platform.create_agent(admin, spec)
+
+
+async def test_patching_settings_keeps_the_file_minimal(
+    platform: Platform, admin: Principal
+) -> None:
+    await platform.patch_config(admin, {"server": {"run_visibility": "workspace"}})
+    assert platform.ws.config.server.run_visibility == "workspace"
+    text = (platform.ws.root / "hollis.toml").read_text()
+    assert 'run_visibility = "workspace"' in text
+    assert "session_hours" not in text, "defaults nobody chose are not written"
+    with pytest.raises(InvalidRequest):
+        await platform.patch_config(admin, {"server": {"run_visibility": "everyone"}})
