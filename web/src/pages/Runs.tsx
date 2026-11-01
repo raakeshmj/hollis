@@ -12,8 +12,15 @@ export function Runs() {
   const [phase, setPhase] = useState<RunPhase | "all">("all");
   const [agent, setAgent] = useState("");
   const [offset, setOffset] = useState(0);
+  const [delegated, setDelegated] = useState(false);
   const agents = useAgents();
-  const runs = useRuns({ phase: phase === "all" ? undefined : phase, agent: agent || undefined, limit: LIMIT, offset });
+  const runs = useRuns({
+    phase: phase === "all" ? undefined : phase,
+    agent: agent || undefined,
+    roots: delegated ? undefined : true,
+    limit: LIMIT,
+    offset,
+  });
 
   return (
     <>
@@ -53,6 +60,17 @@ export function Runs() {
               <option key={a.name}>{a.name}</option>
             ))}
           </select>
+        </label>
+        <label className="check small">
+          <input
+            type="checkbox"
+            checked={delegated}
+            onChange={(event) => {
+              setDelegated(event.target.checked);
+              setOffset(0);
+            }}
+          />
+          <span>Include delegated runs</span>
         </label>
       </div>
       <Async

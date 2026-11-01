@@ -17,8 +17,10 @@ import type {
   McpServerView,
   MemoryDetail,
   MemoryView,
+  OrchestrationView,
   PrincipalView,
   ProbeResult,
+  DelegationLimits,
   RunDetail,
   RunPage,
   RunPhase,
@@ -39,6 +41,7 @@ export const keys = {
   health: ["health"] as const,
   runs: (params: object) => ["runs", params] as const,
   run: (id: string) => ["run", id] as const,
+  tree: (id: string) => ["tree", id] as const,
   approvals: ["approvals"] as const,
   agents: ["agents"] as const,
   agent: (name: string) => ["agent", name] as const,
@@ -115,6 +118,8 @@ export const useAudit = (enabled: boolean) =>
 export interface RunFilters {
   phase?: RunPhase | undefined;
   agent?: string | undefined;
+  /** Leave out runs another run delegated. */
+  roots?: boolean | undefined;
   limit?: number;
   offset?: number;
 }
@@ -136,6 +141,17 @@ export const useRun = (id: string) =>
     refetchInterval: (query) => (busy(query.state.data ? [query.state.data.summary.phase] : []) ? 3_000 : false),
   });
 
+/** The orchestration a run belongs to: its root and every run delegated below it that the caller
+ * can see. Polls while any run in it is still going. */
+export const useRunTree = (id: string, enabled = true) =>
+  useQuery({
+    queryKey: keys.tree(id),
+    queryFn: () => api.get<OrchestrationView>(`/v1/runs/${seg(id)}/tree`),
+    enabled,
+    refetchInterval: (query) =>
+      query.state.data?.nodes.some((n) => !["completed", "failed", "cancelled"].includes(n.run.phase)) ? 3_000 : false,
+  });
+
 export interface StartRunInput {
   input: string;
   agent?: string | undefined;
@@ -155,7 +171,7 @@ export function useRunAction() {
   return useMutation({
     mutationFn: ({ id, action, reason }: { id: string; action: "cancel" | "resume"; reason?: string }) =>
       api.post<RunSummary>(`/v1/runs/${seg(id)}/${action}`, action === "cancel" ? { reason: reason ?? "" } : undefined),
-    onSuccess: (_summary, { id }) => invalidate(keys.run(id), ["runs"], ["approvals"], ["health"]),
+    onSuccess: (_summary, { id }) => invalidate(keys.run(id), ["tree"], ["runs"], ["approvals"], ["health"]),
   });
 }
 
@@ -174,6 +190,7 @@ export function useRunStream(id: string, enabled: boolean, onEvent: (event: Even
       window.clearTimeout(timer);
       timer = window.setTimeout(() => {
         void client.invalidateQueries({ queryKey: keys.run(id) });
+        void client.invalidateQueries({ queryKey: ["tree"] });
         void client.invalidateQueries({ queryKey: ["events", id] });
         void client.invalidateQueries({ queryKey: keys.approvals });
       }, 150);
@@ -218,7 +235,7 @@ export function useDecide() {
         reason: reason || null,
       }),
     onSuccess: (_summary, { approval }) =>
-      invalidate(keys.approvals, keys.run(approval.run_id), ["runs"], ["health"], ["activity"]),
+      invalidate(keys.approvals, keys.run(approval.run_id), ["tree"], ["runs"], ["health"], ["activity"]),
   });
 }
 
@@ -243,6 +260,9 @@ export type AgentDraft = {
   knowledge: { collections: string[]; labels: string[] } | null;
   budget: { max_output_tokens: number } | null;
   record_episodes: boolean;
+  delegates: string[];
+  /** Narrows the workspace's delegation limits; null keeps them. */
+  delegation: Partial<DelegationLimits> | null;
 };
 
 export function useSaveAgent() {

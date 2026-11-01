@@ -73,7 +73,12 @@ export function Agents() {
                       {agent.description ? <div className="small muted">{agent.description}</div> : null}
                     </td>
                     <td className="mono small">{agent.model}</td>
-                    <td>{agent.tools.length}</td>
+                    <td>
+                      {agent.tools.length}
+                      {agent.delegates.length ? (
+                        <div className="small muted">delegates to {agent.delegates.join(", ")}</div>
+                      ) : null}
+                    </td>
                     <td className="hide-narrow">
                       <Tags values={agent.memory?.write.length ? agent.memory.write : (agent.memory?.read ?? [])} />
                     </td>

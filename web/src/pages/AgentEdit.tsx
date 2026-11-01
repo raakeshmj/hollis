@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router";
 import { ApiError } from "../api/client";
 import {
   useAgent,
+  useAgents,
   useCollections,
   useDeleteAgent,
   useDeployments,
@@ -26,7 +27,19 @@ const BLANK: AgentDraft = {
   knowledge: null,
   budget: null,
   record_episodes: false,
+  delegates: [],
+  delegation: null,
 };
+
+const LIMITS = [
+  { key: "max_depth", label: "Max depth", hint: "Levels of delegation below the root run." },
+  { key: "max_children", label: "Delegations per run", hint: "" },
+  { key: "max_runs", label: "Runs in total", hint: "In the whole orchestration, root included." },
+  { key: "token_budget", label: "Token budget", hint: "For the run and everything it delegates." },
+  { key: "wait_s", label: "Wait per delegation (s)", hint: "" },
+] as const;
+
+type LimitKey = (typeof LIMITS)[number]["key"];
 
 const list = (value: string) =>
   value
@@ -47,6 +60,8 @@ function draftOf(agent: Agent): AgentDraft {
       : null,
     budget: agent.budget ? { max_output_tokens: agent.budget.max_output_tokens } : null,
     record_episodes: agent.record_episodes,
+    delegates: [...agent.delegates],
+    delegation: agent.delegation ? { ...agent.delegation } : null,
   };
 }
 
@@ -83,6 +98,21 @@ function AgentForm({ agent, readOnly }: { agent: Agent | undefined; readOnly: bo
     (agent?.memory?.read.filter((s) => !agent.memory?.write.includes(s)) ?? []).join(", "),
   );
   const [labels, setLabels] = useState((agent?.knowledge?.labels ?? []).join(", "));
+  const agents = useAgents();
+  const [limits, setLimits] = useState<Record<LimitKey, string>>(() => {
+    const current = agent?.delegation;
+    const value = (key: LimitKey) => {
+      const v = current?.[key];
+      return v === null || v === undefined ? "" : String(v);
+    };
+    return {
+      max_depth: value("max_depth"),
+      max_children: value("max_children"),
+      max_runs: value("max_runs"),
+      token_budget: value("token_budget"),
+      wait_s: value("wait_s"),
+    };
+  });
   const [confirmDelete, setConfirmDelete] = useState(false);
   const textModels = useMemo(
     () => deployments.data?.filter((d) => d.tasks.includes("text_generation")) ?? [],
@@ -103,9 +133,13 @@ function AgentForm({ agent, readOnly }: { agent: Agent | undefined; readOnly: bo
     const rw = list(memoryRw);
     const ro = list(memoryRo);
     const chosen = draft.knowledge?.collections ?? [];
+    const delegation = Object.fromEntries(
+      LIMITS.filter(({ key }) => limits[key].trim()).map(({ key }) => [key, Number(limits[key])]),
+    );
     const payload: AgentDraft = {
       ...draft,
       model,
+      delegation: Object.keys(delegation).length ? delegation : null,
       memory: rw.length || ro.length ? { read: [...new Set([...rw, ...ro])], write: rw } : null,
       knowledge: chosen.length ? { collections: chosen, labels: list(labels) } : null,
     };
@@ -288,6 +322,56 @@ function AgentForm({ agent, readOnly }: { agent: Agent | undefined; readOnly: bo
                 )}
               </Field>
             </div>
+            <fieldset className="choices">
+              <legend>Delegates</legend>
+              <span className="hint small muted">
+                Agents it may hand bounded tasks to, one tool each. Their runs get their own configuration, narrowed to
+                what this run may reach; delegations that can change things need approval under the default policy.
+              </span>
+              {agents.data?.filter((a) => a.name !== agent?.name).length ? (
+                agents.data
+                  .filter((a) => a.name !== agent?.name)
+                  .map((a) => (
+                    <label className="check small" key={a.name}>
+                      <input
+                        type="checkbox"
+                        checked={draft.delegates.includes(a.name)}
+                        onChange={(event) =>
+                          set(
+                            "delegates",
+                            event.target.checked
+                              ? [...draft.delegates, a.name]
+                              : draft.delegates.filter((d) => d !== a.name),
+                          )
+                        }
+                      />
+                      <span>
+                        {a.name}
+                        {a.description ? <span className="muted"> — {a.description}</span> : null}
+                      </span>
+                    </label>
+                  ))
+              ) : (
+                <span className="small muted">No other agents yet.</span>
+              )}
+            </fieldset>
+            {draft.delegates.length || draft.delegation ? (
+              <div className="form-row">
+                {LIMITS.map(({ key, label: text, hint }) => (
+                  <Field key={key} label={text} hint={hint || "Empty: the workspace limit."}>
+                    {(props) => (
+                      <input
+                        {...props}
+                        type="number"
+                        min={key === "max_depth" || key === "max_children" ? 0 : 1}
+                        value={limits[key]}
+                        onChange={(event) => setLimits((current) => ({ ...current, [key]: event.target.value }))}
+                      />
+                    )}
+                  </Field>
+                ))}
+              </div>
+            ) : null}
             <label className="check">
               <input
                 type="checkbox"

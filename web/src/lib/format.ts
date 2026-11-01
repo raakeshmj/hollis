@@ -57,3 +57,15 @@ export function callLabel(invocationId: string): string {
   const parts = invocationId.split("/");
   return parts.length === 5 && parts[1] === "turn" ? `turn ${parts[2]} · call ${parts[4]}` : invocationId;
 }
+
+/** What a built-in "model" really is, for display next to its name. */
+export function modelNote(protocol: string): string | null {
+  if (protocol === "hollis-demo") return "deterministic rules, not a language model";
+  if (protocol === "hollis-workflow") return "deterministic coordinator, not a model";
+  return null;
+}
+
+/** Who ran it: the agent, "plan" for the workflow coordinator, or an ad hoc run. */
+export function runner(run: { agent?: string | null; model: string }): string | null {
+  return run.agent ?? (run.model === "workflow" ? "plan" : null);
+}

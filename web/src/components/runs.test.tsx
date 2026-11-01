@@ -48,4 +48,12 @@ describe("ApprovalItem", () => {
     expect(screen.queryByRole("button", { name: /Approve/ })).not.toBeInTheDocument();
     expect(screen.getByText("notes.txt")).toBeInTheDocument();
   });
+
+  it("says which agents delegated the run and links to the orchestration", async () => {
+    stubApi({ "GET /v1/session": [200, { principal: admin, expires_at: null }] });
+    const root = "99999999-2222-4333-8444-555555555555";
+    renderAt(<ApprovalItem approval={{ ...approval, depth: 1, root_run_id: root, lineage: ["lead", "writer"] }} />);
+    expect(await screen.findByText(/Delegated:/)).toHaveTextContent("lead › writer");
+    expect(screen.getByRole("link", { name: "open the orchestration" })).toHaveAttribute("href", `/runs/${root}`);
+  });
 });

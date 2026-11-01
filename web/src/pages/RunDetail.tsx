@@ -1,9 +1,10 @@
 import { Fragment, useState } from "react";
 import { Link, useParams } from "react-router";
 import { ApiError } from "../api/client";
-import { useApprovals, useArtifact, useRun, useRunAction, useRunEvents, useRunStream } from "../api/hooks";
+import { useApprovals, useArtifact, useRun, useRunAction, useRunEvents, useRunStream, useRunTree } from "../api/hooks";
 import type { RunDetail as Detail, ToolCallView, TurnView } from "../api/types";
 import { Icon } from "../components/Icon";
+import { AssignmentCard, LineageCrumbs, OrchestrationPanel } from "../components/orchestration";
 import { ApprovalItem, usage } from "../components/runs";
 import {
   Arguments,
@@ -19,7 +20,7 @@ import {
   errorText,
   useToast,
 } from "../components/ui";
-import { callLabel, duration, label, shortId, time, tokens } from "../lib/format";
+import { callLabel, duration, label, modelNote, shortId, time, tokens } from "../lib/format";
 import { isAdmin, useMe } from "../lib/session";
 
 const CITATION = /(\[(?:S\d{1,3}|C-[0-9a-f]{8})\])/;
@@ -62,12 +63,19 @@ export function RunDetail() {
     return <ErrorState error={run.error} retry={() => void run.refetch()} />;
   }
   const detail = run.data;
+  const lineage = detail.lineage ?? [];
   return (
     <>
       <RunHeader detail={detail} live={active} />
-      <blockquote className="input-quote" aria-label="Task">
-        {detail.input}
-      </blockquote>
+      <LineageCrumbs lineage={lineage} current={detail.summary} />
+      {detail.assignment ? (
+        <AssignmentCard assignment={detail.assignment} />
+      ) : (
+        <blockquote className="input-quote" aria-label="Task">
+          {detail.summary.model === "workflow" ? detail.input.split("\n\n```hollis-plan")[0] : detail.input}
+        </blockquote>
+      )}
+      {detail.summary.children > 0 || lineage.length > 0 ? <Orchestration runId={detail.summary.run_id} /> : null}
       <div className="segmented" role="group" aria-label="View" style={{ marginBottom: 20 }}>
         {(["timeline", "events"] as const).map((value) => (
           <button
@@ -89,6 +97,29 @@ export function RunDetail() {
         <EventLog id={id} />
       )}
     </>
+  );
+}
+
+function Orchestration({ runId }: { runId: string }) {
+  const tree = useRunTree(runId);
+  return (
+    <section className="section" aria-labelledby="orchestration-heading" style={{ marginTop: 0, marginBottom: 32 }}>
+      <div className="section-head">
+        <h2 id="orchestration-heading">Orchestration</h2>
+        {tree.data && tree.data.root_run_id !== runId ? (
+          <Link className="small" to={`/runs/${tree.data.root_run_id}`}>
+            Open the root run
+          </Link>
+        ) : null}
+      </div>
+      {tree.isPending ? (
+        <Loading rows={3} label="Loading the orchestration" />
+      ) : tree.error ? (
+        <ErrorState error={tree.error} retry={() => void tree.refetch()} />
+      ) : (
+        <OrchestrationPanel tree={tree.data} focus={runId} />
+      )}
+    </section>
   );
 }
 
@@ -139,11 +170,20 @@ function RunHeader({ detail, live }: { detail: Detail; live: boolean }) {
       <div className="run-head" style={{ marginTop: -12, marginBottom: 20 }}>
         <Phase phase={s.phase} />
         {live ? <span className="live">live</span> : null}
-        <span>{s.agent ? <Link to={`/agents/${s.agent}`}>{s.agent}</Link> : "ad hoc run"}</span>
+        <span>
+          {s.agent ? (
+            <Link to={`/agents/${s.agent}`}>{s.agent}</Link>
+          ) : s.model === "workflow" ? (
+            "plan"
+          ) : (
+            "ad hoc run"
+          )}
+        </span>
         <span>
           {s.model}
-          {s.protocol === "hollis-demo" ? " (deterministic rules, not a language model)" : ` · ${s.provider}`}
+          {modelNote(s.protocol) ? ` (${modelNote(s.protocol)})` : ` · ${s.provider}`}
         </span>
+        {s.children ? <span>{s.children} delegated</span> : null}
         <span>
           started <Time value={s.created_at} /> by {s.created_by ?? "unknown"}
         </span>

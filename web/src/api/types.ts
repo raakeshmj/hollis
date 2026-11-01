@@ -5,18 +5,26 @@ type S = components["schemas"];
 export type Agent = S["Agent"];
 export type AgentInput = S["AgentInput"];
 export type Approval = S["Approval"];
+export type Assignment = S["Assignment"];
 export type ArtifactView = S["ArtifactView"];
 export type CollectionView = S["CollectionView"];
 export type CreatedToken = S["CreatedToken"];
+export type DelegationLimits = S["DelegationLimits"];
+export type DisagreementView = S["DisagreementView"];
 export type DeploymentView = S["DeploymentView"];
 export type EventView = S["EventView"];
 export type Health = S["Health"];
 export type IngestResultView = S["IngestResultView"];
+export type LineageStep = S["LineageStep"];
 export type McpServerView = S["McpServerView"];
 export type MemoryDetail = S["MemoryDetail"];
 export type MemoryView = S["MemoryView"];
+export type OrchestrationNode = S["OrchestrationNode"];
+export type OrchestrationView = S["OrchestrationView"];
 export type ProbeResult = S["ProbeResult"];
 export type PrincipalView = S["PrincipalView"];
+export type RefusalView = S["RefusalView"];
+export type ReportView = S["ReportView"];
 export type RetrievedPassage = S["RetrievedPassage"];
 export type RunDetail = S["RunDetail"];
 export type RunPhase = S["RunPhase"];
@@ -45,3 +53,5 @@ export const PHASES: RunPhase[] = [
 ];
 
 export const ACTIVE: RunPhase[] = ["running", "queued"];
+
+export const TERMINAL: RunPhase[] = ["completed", "failed", "cancelled"];

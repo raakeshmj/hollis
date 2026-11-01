@@ -2,9 +2,10 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { useAgents, useDecide, useDeployments, useStartRun } from "../api/hooks";
 import type { Approval, RunSummary } from "../api/types";
-import { callLabel, count, duration, label, shortId } from "../lib/format";
+import { callLabel, count, duration, label, runner, shortId } from "../lib/format";
 import { canApprove, canOperate, useMe } from "../lib/session";
 import { Icon } from "./Icon";
+import { LineagePath } from "./orchestration";
 import { Arguments, FormError, Phase, Time, errorText, useToast } from "./ui";
 
 /** Start a run: the task, the agent, and (optionally) a session for shared memory. */
@@ -124,9 +125,15 @@ export function RunTable({ runs, showAgent = true }: { runs: RunSummary[]; showA
               <td>
                 <Phase phase={run.phase} />
               </td>
-              {showAgent ? <td>{run.agent ?? <span className="muted">ad hoc</span>}</td> : null}
-              <td className="clip" title={run.input_preview}>
-                {run.input_preview}
+              {showAgent ? (
+                <td>
+                  {runner(run) ?? <span className="muted">ad hoc</span>}
+                  {run.children ? <span className="muted small"> +{run.children} delegated</span> : null}
+                </td>
+              ) : null}
+              <td className="clip" title={run.objective ?? run.input_preview}>
+                {run.depth ? <span className="muted small">↳ </span> : null}
+                {run.objective ?? run.input_preview}
               </td>
               <td className="num hide-narrow">{run.tool_calls}</td>
               <td className="hide-narrow muted">{duration(run.duration_s)}</td>
@@ -173,6 +180,17 @@ export function ApprovalItem({ approval, showRun = true }: { approval: Approval;
       <p className="small" style={{ marginTop: 4 }}>
         {approval.reason}
       </p>
+      {approval.depth > 0 ? (
+        <p className="small muted" style={{ marginTop: 4 }}>
+          Delegated: <LineagePath lineage={approval.lineage} />
+          {approval.root_run_id ? (
+            <>
+              {" "}
+              · <Link to={`/runs/${approval.root_run_id}`}>open the orchestration</Link>
+            </>
+          ) : null}
+        </p>
+      ) : null}
       {showRun ? (
         <p className="small muted" style={{ marginTop: 4 }}>
           In run{" "}
