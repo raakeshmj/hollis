@@ -37,7 +37,7 @@ from hollis.runtime.model import (
     ModelResponse,
 )
 from hollis.runtime.policy import AmbiguousOutcomePolicy, RunBudget
-from hollis.runtime.tools import Decision, ResultPart, ToolRef
+from hollis.runtime.tools import Decision, PolicyOverlayRule, ResultPart, ToolRef
 
 
 class EventType(StrEnum):
@@ -84,6 +84,8 @@ class RunCreated(_Payload):
     """The structured task of a delegated run; `input` is its rendering."""
     delegation: DelegationLimits | None = None
     """Limits on delegation from this run and everything below it. None: no delegation."""
+    policy: tuple[PolicyOverlayRule, ...] = ()
+    """Rules that make the workspace's tool policy stricter for this run (ADR-0035)."""
 
 
 class ModelCallStarted(_Payload):
@@ -309,7 +311,7 @@ EventPayload = Annotated[AnyPayload, Field(discriminator="type")]
 # Current payload schema version per event type. Bump a version only together with an
 # upcaster in _UPCASTERS that converts the previous version's payload dict.
 CURRENT_SCHEMA_VERSIONS: Mapping[EventType, int] = {
-    EventType.RUN_CREATED: 6,
+    EventType.RUN_CREATED: 7,
     EventType.MODEL_CALL_STARTED: 1,
     EventType.MODEL_RESPONSE_RECORDED: 4,
     EventType.MODEL_CALL_FAILED: 1,
@@ -344,7 +346,8 @@ def _added_defaulted_fields(payload: dict[str, Any]) -> dict[str, Any]:
     (RunCreated v3 -> v4: context policy, memory access; ModelResponseRecorded v3 -> v4:
     `Usage.cache_included_in_input`; ToolResultRecorded v1 -> v2: artifact) and M5 (RunCreated
     v4 -> v5: knowledge access; ContextAssembled v1 -> v2: passages) and M7 (RunCreated v5 -> v6:
-    lineage, assignment, delegation limits, `RunBudget.max_total_tokens`)."""
+    lineage, assignment, delegation limits, `RunBudget.max_total_tokens`) and M8 (RunCreated
+    v6 -> v7: policy overlay)."""
     return payload
 
 
@@ -358,6 +361,7 @@ _UPCASTERS: Mapping[tuple[EventType, int], Upcaster] = {
     (EventType.RUN_CREATED, 4): _added_defaulted_fields,
     (EventType.CONTEXT_ASSEMBLED, 1): _added_defaulted_fields,
     (EventType.RUN_CREATED, 5): _added_defaulted_fields,
+    (EventType.RUN_CREATED, 6): _added_defaulted_fields,
 }
 
 

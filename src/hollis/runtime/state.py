@@ -54,6 +54,7 @@ from hollis.runtime.model import CallOutcome, DeploymentRef, FailureKind, ModelR
 from hollis.runtime.policy import AmbiguousOutcomePolicy, RunBudget
 from hollis.runtime.tools import (
     Decision,
+    PolicyOverlayRule,
     ResultPart,
     ToolRef,
     approval_binding,
@@ -255,6 +256,8 @@ class RunState(_Frozen):
     lineage: Lineage | None = None
     assignment: Assignment | None = None
     delegation: DelegationLimits | None = None
+    policy: tuple[PolicyOverlayRule, ...] = ()
+    """Rules that make the workspace's tool policy stricter for this run."""
 
     @property
     def depth(self) -> int:
@@ -333,6 +336,7 @@ def apply(state: RunState | None, event: EventEnvelope) -> RunState:
             lineage=payload.lineage,
             assignment=payload.assignment,
             delegation=payload.delegation,
+            policy=payload.policy,
         )
 
     if state is None:  # unreachable: next_status only allows RunCreated without a run

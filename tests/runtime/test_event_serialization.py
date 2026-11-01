@@ -35,7 +35,7 @@ def test_serialized_form_is_versioned_json() -> None:
         "occurred_at",
         "payload",
     }
-    assert data["schema_version"] == CURRENT_SCHEMA_VERSIONS[EventType.RUN_CREATED] == 6
+    assert data["schema_version"] == CURRENT_SCHEMA_VERSIONS[EventType.RUN_CREATED] == 7
     assert data["payload"]["type"] == "run_created"
 
 
@@ -107,12 +107,13 @@ def test_v2_run_created_is_upcast_to_current() -> None:
     created_event, *_ = build_log(run, happy_payloads(run))
     data = json.loads(serialize_event(created_event))
     data["schema_version"] = 2
-    # v3 (M3), v4 (M4), v5 (M5), v6 (M7)
-    for added in ("tools", "context", "memory", "knowledge", "lineage", "assignment", "delegation"):
+    # v3 (M3), v4 (M4), v5 (M5), v6 (M7), v7 (M8)
+    added_fields = ("tools", "context", "memory", "knowledge", "lineage", "assignment")
+    for added in (*added_fields, "delegation", "policy"):
         del data["payload"][added]
     del data["payload"]["budget"]["max_total_tokens"]
     upcast = deserialize_event(json.dumps(data))
-    assert upcast.schema_version == 6
+    assert upcast.schema_version == 7
     assert upcast.payload == created_event.payload
 
 

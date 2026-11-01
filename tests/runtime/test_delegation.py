@@ -95,7 +95,7 @@ def test_run_created_v5_payloads_upcast_without_lineage() -> None:
     [event] = build_log(run_id, [created()])
     stored = json.loads(serialize_event(event))
     stored["schema_version"] = 5
-    for field in ("lineage", "assignment", "delegation"):
+    for field in ("lineage", "assignment", "delegation", "policy"):
         stored["payload"].pop(field)
     stored["payload"]["budget"].pop("max_total_tokens")
     state = fold([deserialize_event(json.dumps(stored))])

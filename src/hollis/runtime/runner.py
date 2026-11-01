@@ -126,6 +126,7 @@ from hollis.runtime.tools import (
     Approver,
     Decision,
     DefaultToolPolicy,
+    PolicyOverlayRule,
     PolicyRequest,
     Tool,
     ToolArgumentError,
@@ -136,6 +137,7 @@ from hollis.runtime.tools import (
     ToolOutput,
     ToolPolicy,
     ToolTrust,
+    apply_overlay,
     approval_binding,
 )
 
@@ -176,6 +178,8 @@ class RunSpec(BaseModel):
     """Set by the application when another run delegated this one (ADR-0030)."""
     assignment: Assignment | None = None
     delegation: DelegationLimits | None = None
+    policy: tuple[PolicyOverlayRule, ...] = ()
+    """Rules that make the tool policy stricter for this run only (ADR-0035)."""
 
 
 class SecretInRunInput(ValueError):
@@ -325,6 +329,7 @@ class Runner:
             lineage=spec.lineage,
             assignment=spec.assignment,
             delegation=spec.delegation,
+            policy=spec.policy,
         )
         return await self._append(None, run_id or self._new_id(), payload)
 
@@ -847,16 +852,15 @@ class Runner:
             arguments = tool.validate(call.arguments)
         except ToolArgumentError as exc:
             return Decision.INVALID, f"invalid arguments: {exc}", None, None
-        verdict = self._policy.decide(
-            PolicyRequest(
-                run_id=state.run_id,
-                invocation_id=invocation.invocation_id,
-                tool=ref,
-                arguments=arguments,
-                environment=self._environment,
-                depth=state.depth,
-            )
+        request = PolicyRequest(
+            run_id=state.run_id,
+            invocation_id=invocation.invocation_id,
+            tool=ref,
+            arguments=arguments,
+            environment=self._environment,
+            depth=state.depth,
         )
+        verdict = apply_overlay(self._policy.decide(request), state.policy, request)
         return verdict.decision, verdict.reason, verdict.rule, arguments
 
     # --- tool phase: approvals and execution ----------------------------------------------------

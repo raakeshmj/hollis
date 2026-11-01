@@ -5,9 +5,11 @@ runtime depends only on these types and protocols. Everything here is determinis
 logic. Nothing a model says, and nothing in a tool's description, grants permission.
 """
 
+import fnmatch
 import hashlib
 import json
-from collections.abc import Mapping
+import posixpath
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from enum import StrEnum
 from typing import Literal, Protocol, runtime_checkable
@@ -221,6 +223,73 @@ class PolicyDecision(_Frozen):
 
 class ToolPolicy(Protocol):
     def decide(self, request: PolicyRequest) -> PolicyDecision: ...
+
+
+_STRICTNESS = {Decision.ALLOW: 0, Decision.REQUIRE_APPROVAL: 1, Decision.DENY: 2}
+
+
+class PolicyOverlayRule(_Frozen):
+    """A per-run rule recorded with the run that can only make a policy decision stricter
+    (ADR-0035): an agent can be held to less than the workspace allows, never more.
+
+    It matches a tool call by tool name (glob) and declared effect, and optionally by
+    arguments: `outside` maps an argument name to allowed path globs, and the rule matches when
+    any value of that argument (a string or a list of strings) is outside all of them, or tries
+    to leave the root with `..`. Paths are compared relative, as the tools receive them."""
+
+    decision: Literal[Decision.REQUIRE_APPROVAL, Decision.DENY]
+    tools: str = Field(default="*", min_length=1, max_length=200)
+    effects: tuple[ToolEffect, ...] = ()
+    outside: dict[str, tuple[str, ...]] = Field(default_factory=dict[str, tuple[str, ...]])
+    name: str = Field(default="", max_length=80)
+    reason: str = Field(default="", max_length=300)
+
+    def matches(self, request: PolicyRequest) -> bool:
+        tool = request.tool
+        if not fnmatch.fnmatchcase(tool.name, self.tools):
+            return False
+        if self.effects and tool.effect not in self.effects:
+            return False
+        if not self.outside:
+            return True
+        return any(
+            _outside(request.arguments.get(argument), allowed)
+            for argument, allowed in self.outside.items()
+        )
+
+
+def _outside(value: JsonValue, allowed: Sequence[str]) -> bool:
+    values = value if isinstance(value, list) else [value]
+    for item in values:
+        if not isinstance(item, str):
+            continue
+        normalized = posixpath.normpath(item.replace("\\", "/").removeprefix("./"))
+        if normalized.startswith(("..", "/")) or not any(
+            fnmatch.fnmatchcase(normalized, pattern) for pattern in allowed
+        ):
+            return True
+    return False
+
+
+def apply_overlay(
+    decision: PolicyDecision, rules: Sequence[PolicyOverlayRule], request: PolicyRequest
+) -> PolicyDecision:
+    """The workspace decision, unless a matching overlay rule is stricter (the strictest
+    matching rule wins). Never loosens."""
+    strictest: tuple[int, PolicyOverlayRule] | None = None
+    for index, rule in enumerate(rules):
+        if rule.matches(request) and (
+            strictest is None or _STRICTNESS[rule.decision] > _STRICTNESS[strictest[1].decision]
+        ):
+            strictest = (index, rule)
+    if strictest is None or _STRICTNESS[strictest[1].decision] <= _STRICTNESS[decision.decision]:
+        return decision
+    index, rule = strictest
+    return PolicyDecision(
+        decision=rule.decision,
+        reason=rule.reason or f"the agent's policy rule {rule.name or index} applies",
+        rule=f"agent:{rule.name or index}",
+    )
 
 
 class DefaultToolPolicy:

@@ -106,7 +106,7 @@ async def test_database_rejection_mid_batch_rolls_back_whole_batch(db: Path) -> 
         ("payload", "'not json'", CorruptEvent),
         ("payload", '\'{"type": "run_created"}\'', CorruptEvent),
         ("event_type", "'run_completed'", CorruptEvent),
-        ("schema_version", "7", UnknownEventSchema),
+        ("schema_version", "99", UnknownEventSchema),
     ],
 )
 async def test_undecodable_rows_fail_loudly(
