@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Purpose
 
-Hollis is a model-agnostic, local-first platform for building, running and orchestrating autonomous agents (Python SDK first, with a CLI and REST API later). The **runtime and harness** are the foundation. Coding agents are one specialization, so don't let the core assume coding tasks.
+Hollis is a model-agnostic, local-first platform for building, running and orchestrating autonomous agents: a Python SDK, a CLI, a REST API and a web app over one platform layer. The **runtime and harness** are the foundation. Coding agents are one specialization, so don't let the core assume coding tasks.
 
-**Current milestone: M5 (knowledge retrieval and RAG) is implemented and verified offline, on M4 (context and memory), M3 (tools) and M2 (gateway). No live model, embedding model or third-party MCP server has been tested, and no sandbox exists. The next milestone is not yet planned.** Don't implement work from later milestones. See [docs/product/roadmap.md](docs/product/roadmap.md).
+**Current milestone: M6 (developer experience, product interface and brand) is implemented and verified offline, on M2–M5. No live model, embedding model or third-party MCP server has been tested, and no sandbox exists. The next milestone (M7, multi-agent coordination) is not yet planned.** Don't implement work from later milestones. See [docs/product/roadmap.md](docs/product/roadmap.md).
 
 ## Repository map
 
@@ -15,14 +15,15 @@ Hollis is a model-agnostic, local-first platform for building, running and orche
 - `src/hollis/tools/`: `@tool` function tools, `ToolRegistry`, `RulePolicy`, built-in filesystem and command tools (`builtin/`), MCP client (`mcp.py`, optional extra).
 - `src/hollis/knowledge/`: extraction (`extract.py`), sanitization, chunking, ingestion lifecycle (`ingest.py`, `KnowledgeBase`), hybrid retrieval (`retrieve.py`), knowledge tools. Separate from memory. SQLite lives in `adapters/sqlite_knowledge.py`; embeddings in `adapters/openai_embeddings.py` and `adapters/local_embeddings.py`.
 - `src/hollis/memory/`: memory records, write policy, `MemoryManager` (lifecycle, recall, deletion, maintenance), memory tools, episodes and extraction. Storage-independent; SQLite lives in `adapters/sqlite_memory.py`.
-- `src/hollis/adapters/`: stores, fake provider, credentials, endpoint config (`config.py`, SDK-free), shared HTTP layer (`_http.py`), protocol adapters `anthropic_messages.py` (official SDK) and `openai_chat.py` (raw httpx2). Provider SDKs and httpx2 are optional extras, loaded only by their adapter (enforced by subprocess tests).
-- `tests/`: `runtime/`, `tools/`, `memory/`, `knowledge/`, `evals/` (memory and compaction: `python -m tests.evals.report`; retrieval: `python -m tests.evals.rag.report`), `security/` (agentic attack scenarios), `adapters/` (mock transports), `gateway/`, `network/` (real loopback sockets and TLS), `conformance/` (offline, plus opt-in live via `HOLLIS_CONFORMANCE_*`), `recovery/`, `architecture/`, `live/`. Shared helpers live in `tests/support/`.
-- `docs/product/`: vision and non-goals, requirements (FR-x / NFR-x IDs), roadmap.
-- `docs/architecture/`: `overview.md` (components, decided vs open), `testing.md` (test and eval strategy), `evaluation.md` and `rag-evaluation.md` (evaluation results).
-- `docs/decisions/`: ADRs. Use `0000-template.md` for new ones.
-- `docs/plans/`: milestone implementation plans (`m5-knowledge.md` is the most recent).
-- `docs/research/`: research notes with adopt now / later / no verdicts.
-- `docs/development.md`: workflow, ADR policy, when to add skills, rules, hooks or subagents.
+- `src/hollis/adapters/`: stores, fake provider, the deterministic demo model (`demo_model.py`), credentials, endpoint config (`config.py`, SDK-free), shared HTTP layer (`_http.py`), protocol adapters `anthropic_messages.py` (official SDK) and `openai_chat.py` (raw httpx2). Provider SDKs and httpx2 are optional extras, loaded only by their adapter (enforced by subprocess tests).
+- `src/hollis/platform/`: the one application layer ([ADR-0026](docs/decisions/0026-workspace-and-platform-layer.md)): workspace (`hollis.toml` + `.hollis/`), `Platform` services (every method takes the calling principal), auth, run supervisor, views computed from the fold, API schemas.
+- `src/hollis/server/` (FastAPI, extra `server`; `static/` is the committed web build), `src/hollis/sdk/` (embedded `LocalBackend`, HTTP `RemoteBackend`, async and sync clients), `src/hollis/cli/` (Click on the SDK).
+- `web/`: the web app (React, TypeScript, Vite); `brand/`: identity assets and guide (`brand/build.py`); `examples/`: runnable SDK and CLI examples.
+- `tests/`: `platform/`, `server/`, `sdk/`, `cli/`, `ui/` (web build; Chrome journeys opt-in), `runtime/`, `tools/`, `memory/`, `knowledge/`, `evals/` (memory and compaction: `python -m tests.evals.report`; retrieval: `python -m tests.evals.rag.report`), `security/` (agentic attack scenarios), `adapters/` (mock transports), `gateway/`, `network/` (real loopback sockets and TLS), `conformance/` (offline, plus opt-in live via `HOLLIS_CONFORMANCE_*`), `recovery/`, `architecture/`, `live/`. Shared helpers live in `tests/support/`.
+- `docs/product/`: vision, requirements (FR-x / NFR-x IDs), roadmap. `docs/architecture/`: `overview.md` (components, decided vs open), `testing.md`, `evaluation.md`, `rag-evaluation.md`.
+- `docs/decisions/`: ADRs (template `0000-template.md`). `docs/plans/`: milestone plans (`m6-product.md` is the most recent).
+- `docs/guides/` and `docs/reference/`: installation, quickstart, SDK, web, deployment; CLI, REST API, configuration.
+- `docs/research/`: research notes. `docs/development.md`: workflow, ADR policy, web workflow, when to add skills, rules, hooks or subagents.
 
 **Before making an architectural decision**, read `docs/architecture/overview.md` and the relevant ADRs. If the change is load-bearing and costly to reverse, propose a new ADR rather than deciding silently.
 
@@ -30,10 +31,10 @@ Hollis is a model-agnostic, local-first platform for building, running and orche
 
 ```bash
 make sync                    # uv sync --locked (dev includes all provider extras)
-make check                   # ruff format --check, ruff check, pyright (strict), pytest; CI runs this
-make fix                     # ruff format + ruff check --fix
+make check                   # ruff format --check, ruff check, pyright (strict), pytest; CI runs this (make fix applies fixes)
 uv run pytest tests/test_cli.py::test_version_flag_prints_version_and_exits_zero   # single test
 uv add <pkg> / uv add --dev <pkg>   # updates uv.lock (commit it)
+make web-check / web-build / web-api / web-e2e   # web app (Node 22.12+); see docs/development.md
 HOLLIS_LIVE_TESTS=1 ANTHROPIC_API_KEY=... uv run pytest tests/live -m live   # opt-in, costs money
 ```
 
@@ -70,6 +71,10 @@ HOLLIS_LIVE_TESTS=1 ANTHROPIC_API_KEY=... uv run pytest tests/live -m live   # o
   - Never compare vectors across embedding spaces; changing models means `migrate_embeddings`.
   - Knowledge never writes memory. Retrieved text is data: framed, citation keys assigned by Hollis, never an input to authorization.
   - Dense results from the hashing or simulated embedders are not semantic-quality evidence; don't claim otherwise.
+- Interfaces ([ADR-0026](docs/decisions/0026-workspace-and-platform-layer.md)–[0029](docs/decisions/0029-web-application-and-design-system.md)):
+  - Behaviour and authorization live in `Platform` services; the API, SDK, CLI and web app only call them and render views. Never re-derive run semantics in an interface.
+  - Authentication is never optional; bind to loopback by default; resources a caller can't see answer 404.
+  - Every API change: run `make web-api` and rebuild the web app (a test checks the contract). Label the demo model wherever it appears; add no setting without a backend capability.
 - Don't create packages or modules to reserve namespace. Create them when there is code for them.
 - Don't add dependencies without a justification in the commit message. Architecture-shaping dependencies need an ADR.
 

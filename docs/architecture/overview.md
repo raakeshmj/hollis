@@ -1,15 +1,18 @@
 # Architecture Overview
 
-Status: direction-setting. Implemented so far (M1–M5): the runtime core (`hollis.runtime`: events, state fold, RunStore, ModelProvider, embedding, tool, artifact, memory and knowledge ports, grounding checks, identifier-aware text analysis, failure taxonomy, budgets, redaction, the multi-turn tool loop, the context engine), the memory system (`hollis.memory`: records, write policy, lifecycle, recall, memory tools, episodes), the knowledge system (`hollis.knowledge`: extraction, chunking, ingestion lifecycle, hybrid retrieval, knowledge tools), the tool system (`hollis.tools`: `@tool` definitions, registry, rule-based policy, filesystem and command tools, MCP client), the model gateway (`hollis.gateway`: catalog, routing policy, resolution), and adapters (`hollis.adapters`: in-memory and SQLite stores, scripted fake provider, credential loader, endpoint config, Anthropic Messages and OpenAI-compatible Chat Completions protocol adapters). Each section separates **decided** from **open**. Decided items link to ADRs, and open items name the milestone that resolves them.
+Status: direction-setting. Implemented so far (M1–M6): the product interfaces (`hollis.platform`: workspace, principal-aware services, auth, run supervision and views; `hollis.server`: the REST API; `hollis.sdk`: the embedded and remote SDK; `hollis.cli`; the web app in `web/`, served from `hollis.server`), the runtime core (`hollis.runtime`: events, state fold, RunStore, ModelProvider, embedding, tool, artifact, memory and knowledge ports, grounding checks, identifier-aware text analysis, failure taxonomy, budgets, redaction, the multi-turn tool loop, the context engine), the memory system (`hollis.memory`: records, write policy, lifecycle, recall, memory tools, episodes), the knowledge system (`hollis.knowledge`: extraction, chunking, ingestion lifecycle, hybrid retrieval, knowledge tools), the tool system (`hollis.tools`: `@tool` definitions, registry, rule-based policy, filesystem and command tools, MCP client), the model gateway (`hollis.gateway`: catalog, routing policy, resolution), and adapters (`hollis.adapters`: in-memory and SQLite stores, scripted fake provider, credential loader, endpoint config, Anthropic Messages and OpenAI-compatible Chat Completions protocol adapters). Each section separates **decided** from **open**. Decided items link to ADRs, and open items name the milestone that resolves them.
 
 ## Shape
 
 Hollis is a **modular monolith**: one Python package (`hollis`) with internal modules that have enforced dependency directions ([ADR-0001](../decisions/0001-modular-monolith-python-uv.md)). The core depends only on interfaces ("ports"). Concrete providers and stores are adapters that depend on the core, never the other way round ([ADR-0002](../decisions/0002-ports-and-adapters.md)).
 
 ```
-          SDK (public Python API)      CLI        REST API
-                     \                  |            /
-                      +---- interfaces depend on ---+
+     web app (web/)          CLI (hollis.cli)
+           |  HTTP                 |
+      REST API (hollis.server)   SDK (hollis.sdk): embedded or remote ---- HTTP ----+
+           \                       |                                                |
+            +-------------- platform services (hollis.platform) <------------------+
+                 workspace · principals and auth · run supervisor · views
                                      |
                               runtime core
      (run state machine · event log · runner · budgets · policy)
@@ -39,7 +42,8 @@ Packages appear only when there is code to put in them. Nothing gets created to 
 | **Artifact store** | Complete tool results outside the event log, referenced and read on demand ([ADR-0019](../decisions/0019-artifact-store.md)). | M4 |
 | **Memory** | Governed, scoped, temporal agent memory across runs, behind a storage port ([ADR-0020](../decisions/0020-memory-model-and-lifecycle.md), [ADR-0021](../decisions/0021-memory-storage-retrieval-and-deletion.md)). | M4 |
 | **Knowledge** | Ingestion with provenance and structure, hybrid retrieval with access control in the store, cited passages in context, knowledge tools, grounding checks ([ADR-0022](../decisions/0022-embedding-task.md)–[0025](../decisions/0025-rag-grounding-and-security.md)). | M5 |
-| **Interfaces** | SDK first. CLI and REST API are thin layers over the same operations. | SDK M1+, CLI/API M6 |
+| **Platform layer** | Workspace (`hollis.toml`, `.hollis/`), the one set of services every interface calls, with authorization by principal, background run supervision, the run index, views computed from the fold, the demo model ([ADR-0026](../decisions/0026-workspace-and-platform-layer.md), [ADR-0028](../decisions/0028-authentication-and-authorization.md)). | M6 |
+| **Interfaces** | REST API (versioned, OpenAPI, problem details, SSE), the SDK (embedded or remote, async and sync), the CLI, the web app ([ADR-0027](../decisions/0027-rest-api-contract.md), [ADR-0029](../decisions/0029-web-application-and-design-system.md)). None re-derives run semantics. | M6 |
 | **Coordination** | Multi-agent composition built on runs, not a separate engine. | M7 |
 
 ## Runtime and harness
@@ -135,6 +139,17 @@ Packages appear only when there is code to put in them. Nothing gets created to 
 - Cross-encoder reranking as a gateway task.
 - Web and enterprise connectors; OCR and multimodal retrieval.
 
+## Product interfaces
+
+**Decided (M6).**
+- One application layer, `hollis.platform`: every interface calls `Platform` services with the calling principal; views are computed from the runtime's fold and events ([ADR-0026](../decisions/0026-workspace-and-platform-layer.md)).
+- Runs execute in the background in the process that owns the workspace, independent of connections; shutdown leaves them resumable and server start resumes interrupted ones. One process owns the stores: CLI commands use a running server automatically.
+- REST under `/v1` with RFC 9457 errors, SSE with `Last-Event-ID` and long polling; the SDK's two backends return the same models and errors ([ADR-0027](../decisions/0027-rest-api-contract.md)).
+- Authentication always required; loopback by default; hashed tokens, single-use sign-in links, strict cookies with an Origin check, a Host allowlist; authorization by role, grants intersected with agents, run visibility, approval identity ([ADR-0028](../decisions/0028-authentication-and-authorization.md)).
+- A web app on the same origin, built into the package, with a design system from the brand ([ADR-0029](../decisions/0029-web-application-and-design-system.md), [brand guide](../../brand/README.md)).
+
+**Open.** TLS termination and external identity providers (behind a proxy today); more than one process per workspace; run deletion.
+
 ## Persistence and deployment
 
 **Decided.** Local-first (NFR-8). Storage sits behind a port.
@@ -195,4 +210,9 @@ See [testing.md](testing.md).
 | Knowledge storage, hybrid retrieval, access control in the store | Accepted (M5) | ADR-0024 |
 | RAG grounding, citations, trust, deletion | Accepted (M5) | ADR-0025 |
 | Approximate vector index, cross-encoder reranking, connectors, multimodal | Open | — |
+| Workspace and one platform layer for every interface | Accepted (M6) | ADR-0026 |
+| REST contract, long-running work (SSE, long polling), SDK backends | Accepted (M6) | ADR-0027 |
+| Authentication and authorization | Accepted (M6) | ADR-0028 |
+| Web application and design system | Accepted (M6) | ADR-0029 |
+| TLS, external identity providers, multi-process workspaces | Open | — |
 | Cloud deployment target | Open | Undecided |

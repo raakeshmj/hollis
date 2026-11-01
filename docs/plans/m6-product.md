@@ -82,3 +82,14 @@ M0–M5 give a complete *library*: runtime, gateway, tools, context, memory, kno
 8. Web application.
 9. End-to-end and UI tests.
 10. Documentation, ADRs and the final review.
+
+## Outcome
+
+Implemented as planned, with these differences (recorded in ADR-0026–0029):
+
+- The CLI targets a server with `--url` / `HOLLIS_URL` (not `--server`), and finds a running local server by itself through an owner-only `.hollis/server.json` marker, so one process owns the stores.
+- The run index pairs ownership recorded at start with columns re-derivable from the event logs; a run whose ownership was never recorded is visible to admins only.
+- Added for usability, each with a backend capability: `runtime.default_agent`, the starter agent and collection, single-use sign-in links for the caller, partial configuration updates (`PATCH /v1/settings/config`), `server.allowed_hosts`.
+- A finished run waits for no approval: cancelling a run that awaited one closes the approval (a runtime fix found by the platform tests).
+- SDK and CLI landed in one commit; end-to-end and UI tests landed with the parts they test, plus a commit for shutdown recovery and credentials at rest.
+- Web toolchain versions were chosen for Node 22.12+: React Router 7, TypeScript 5.9, ESLint 9, jsdom 28.

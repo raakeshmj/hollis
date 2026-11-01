@@ -18,6 +18,9 @@
 | Integration | Full runs through the runtime with the scripted fake provider, incl. crash injection | From M1 |
 | Architecture | Import-boundary tests (AST-based, stdlib only) | From M1 |
 | Context and memory evals | Multi-session scenarios and compaction fidelity, model-free context sufficiency against baselines ([evaluation](evaluation.md)) | ✅ M4 (offline) |
+| Platform journeys | The service layer every interface uses, driven by the deterministic demo model: runs, approvals, knowledge, memory, sessions, recovery (`tests/platform/`) | ✅ M6 |
+| API, SDK and CLI | REST contract, errors and journeys in process; a real loopback server with live SSE and restart (`tests/server/`); every SDK operation against both backends (`tests/sdk/`); CLI output, JSON and exit codes (`tests/cli/`); examples (`tests/test_examples.py`) | ✅ M6 |
+| Web app | TypeScript strict, ESLint with strict accessibility rules, Vitest component tests (`make web-check`); the committed build and its API contract (`tests/ui/`); Playwright journeys in the installed Chrome against a real server (opt-in: `make web-e2e`, `HOLLIS_UI_TESTS=1`; a CI job) | ✅ M6 |
 | Behavioral evals | Assertions on agent trajectories against real models | Pending live access (opt-in memory eval written, not run) |
 | End-to-end benchmarks | Task-level success on realistic suites | Later |
 
@@ -66,6 +69,12 @@ Each property maps to a requirement and gets a test when its component exists. �
 | Hidden or invisible document content never reaches the index; instruction-like chunks stay out of automatic context; documents cannot forge citations, identity or trust | NFR-4 | ✅ M5 |
 | Answers are checked against the run's actual evidence; fabricated citations are reported; external tools cannot supply evidence | FR-15 | ✅ M5 `tests/knowledge/test_rag_runtime.py` |
 | Retrieval quality compared across configurations on a development and a held-out corpus | FR-15 | ✅ M5 offline ([rag-evaluation](rag-evaluation.md)); live: not run |
+| Every network route except liveness requires authentication; tokens and sessions are hashed at rest; no token or session value appears in stored data or responses after real use | NFR-4, FR-18 | ✅ M6 `tests/server/test_secrets.py`, `tests/platform/test_auth.py` |
+| Roles, run visibility, the approve permission and grant intersection are enforced in the services, so every interface inherits them (mutation-checked) | FR-18 | ✅ M6 `tests/platform/test_authorization.py` |
+| An approval is recorded with the authenticated principal and only for a run visible to them; a cancelled run can no longer be approved | FR-7, FR-18 | ✅ M6 |
+| Cookie requests that change state need this server's Origin; unexpected Host headers are refused; responses carry the CSP | FR-18 | ✅ M6 `tests/server/test_api.py` |
+| Runs survive a dropped event stream, shutdown in the middle of a model call, cancellation and restart; the run index is re-derivable from the logs | NFR-2, FR-4 | ✅ M6 `tests/platform/test_runs.py`, `tests/sdk/`, `tests/server/test_live_server.py` |
+| The platform, SDK and CLI load no optional dependency at import | NFR-7 | ✅ M6 `tests/architecture/` |
 
 ## Future behavioral evaluations (once live access is available)
 

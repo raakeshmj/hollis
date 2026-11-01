@@ -11,6 +11,18 @@ make fix         # apply ruff formatting and autofixes
 uv run pytest tests/test_cli.py::test_version_flag_prints_version_and_exits_zero   # single test
 ```
 
+The web app (`web/`) has its own toolchain, needed only to change it (Node 22.12+):
+
+```bash
+make web-install   # npm ci
+make web-check     # TypeScript, ESLint (strict accessibility rules), Vitest
+make web-build     # writes the committed build to src/hollis/server/static
+make web-api       # after API changes: regenerate web/openapi.json and the TypeScript types
+make web-e2e       # Playwright journeys in your installed Chrome against a real `hollis serve`
+```
+
+Changes to the interface get a visual review in both themes and at phone width before they're committed.
+
 Dependencies are added with `uv add <pkg>` (runtime) or `uv add --dev <pkg>` (dev). Both update `uv.lock`, which is committed. Every new dependency needs a one-line justification in the commit message. A dependency that shapes architecture needs an ADR.
 
 ## Workflow

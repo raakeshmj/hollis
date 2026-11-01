@@ -85,7 +85,7 @@ ignore = [
 "tests/evals/rag/grounding_cases.py" = ["E501"]
 
 [tool.pyright]
-include = ["src", "tests"]
+include = ["src", "tests", "examples"]
 pythonVersion = "3.12"
 typeCheckingMode = "strict"
 venvPath = "."

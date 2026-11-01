@@ -1,10 +1,31 @@
 # Hollis
 
-A model-agnostic, local-first platform for building, running and orchestrating autonomous agents, with a Python SDK first.
+A model-agnostic, local-first platform for building, running and supervising autonomous agents: a Python SDK, a CLI, a REST API and a web app.
 
-**Status: pre-alpha. M5 (knowledge retrieval and RAG), M4 (context engineering and memory), M3 (tool runtime) and M2 (universal model gateway) are implemented and verified offline; no live provider, inference server or third-party MCP server has been tested yet.** See the [roadmap](docs/product/roadmap.md).
+**Status: pre-alpha. M6 (product interfaces and brand), M5 (knowledge retrieval and RAG), M4 (context engineering and memory), M3 (tool runtime) and M2 (universal model gateway) are implemented and verified offline; no live provider, inference server or third-party MCP server has been tested yet.** See the [roadmap](docs/product/roadmap.md).
+
+## Try it
+
+```bash
+uv tool install ".[server]"         # from a checkout: the CLI, REST API and web app
+mkdir acme && cd acme && hollis init
+hollis run "list the files here"    # the starter agent, on the built-in demo model
+hollis serve                        # the web app at http://127.0.0.1:7878 (sign-in link printed)
+```
+
+No API key or model download is needed to try it: a fresh workspace has a **demo model**, which is deterministic rules, not a language model (its answers start with `[demo]`), so you can see tools, approvals, memory and knowledge work before connecting a real one. Start with the [quickstart](docs/guides/quickstart.md).
 
 ## What exists today
+
+- **Product interfaces** ([ADR-0026](docs/decisions/0026-workspace-and-platform-layer.md)–[0029](docs/decisions/0029-web-application-and-design-system.md)), all over one service layer, so they behave identically:
+  - **Workspace:** `hollis.toml` (configuration, safe to commit) and `.hollis/` (SQLite stores). `hollis init` creates one with a starter agent.
+  - **CLI** (`hollis`): run agents and follow them live, decide approvals at the terminal, manage agents, models, tools, knowledge, memory, tokens and principals; JSON output, documented exit codes, shell completion ([reference](docs/reference/cli.md)).
+  - **REST API** (`hollis serve`): versioned under `/v1`, OpenAPI, RFC 9457 errors, Server-Sent Events and long polling for runs that take minutes or wait days for an approval ([reference](docs/reference/rest-api.md)).
+  - **Python SDK:** `Hollis` and `AsyncHollis`, the same typed API embedded in your process or against a server ([guide](docs/guides/sdk.md)).
+  - **Web app:** follow runs live on a timeline, approve or deny tool calls, manage everything above; light and dark themes, keyboard accessible, responsive ([guide](docs/guides/web.md)).
+  - **Security:** authentication always required, loopback by default, hashed tokens, single-use sign-in links, strict cookies, roles and grants enforced in the services; a run's access is the agent's intersected with its caller's.
+  - **Reliability:** runs execute in the background, survive dropped connections and restarts, can be cancelled, and resume from their event logs.
+  - **Brand:** the Hollis identity and its guide are in [`brand/`](brand/README.md).
 
 - **Multi-turn tool runtime** ([ADR-0014](docs/decisions/0014-tool-runtime-and-durable-lifecycle.md)). A run alternates model turns and tool calls until it answers, fails, or suspends awaiting approval. One code path handles first execution, retries and resuming after a crash.
   - Every tool call is validated, decided by deterministic policy, optionally approved, then executed and recorded. The event fold refuses execution without authorization.
@@ -57,12 +78,17 @@ A model-agnostic, local-first platform for building, running and orchestrating a
 - **Exact dense scan** is linear (about 240 ms at 20,000 chunks of 384 dimensions); larger collections need an approximate index. There's no OCR, multimodal retrieval or web connector.
 - **Deleting a memory doesn't erase copies in run logs** that recalled it. Runs themselves can't be deleted yet.
 - **Text generation only; non-streaming.** Responses are capped at about 21k output tokens on the Anthropic protocol.
-- **Not yet built:** native adapters beyond Anthropic (for example OpenAI's Responses API, Gemini or Bedrock); cancellation and multi-agent orchestration; a CLI or REST API beyond `hollis --version`.
+- **Not yet built:** native adapters beyond Anthropic (for example OpenAI's Responses API, Gemini or Bedrock); multi-agent orchestration.
+- **Interfaces:** no TLS termination or external identity provider (put a proxy in front for network use; [deployment](docs/guides/deployment.md)); one server process per workspace; the web app is tested in Chrome only, and accessibility is checked automatically, not with screen-reader users. Embedded SDK runs stop when your process exits (they stay resumable).
 - **No cost accounting or input-token budgets.** Usage is recorded as reported.
 - **Run input is stored verbatim.** Secrets embedded in user text are not detected unless they're registered credentials ([details](docs/product/requirements.md#data-persistence-and-secret-handling)).
 - **No deletion mechanism yet** (policy only, [ADR-0010](docs/decisions/0010-retention-and-deletion.md)). SQLite data is not encrypted at rest. Single process, single active runner per run.
 
-## Using the gateway
+## Lower-level APIs
+
+The platform composes these from `hollis.toml`; you can also use them directly.
+
+### Using the gateway
 
 ```python
 from hollis.adapters.sqlite_store import SqliteRunStore
@@ -78,7 +104,7 @@ run = await runner.create(
 final = await runner.execute(run.run_id)
 ```
 
-## Using tools
+### Using tools
 
 ```python
 from hollis.tools import (
@@ -132,7 +158,7 @@ final = await runner.execute(run.run_id)
 
 The default policy runs trusted read-only tools and requires approval for everything else. The deployment must declare tool support (`capabilities.text.tools`).
 
-## Memory and context
+### Memory and context
 
 ```python
 from hollis.adapters.artifact_store import SqliteArtifactStore
@@ -170,7 +196,7 @@ run = await runner.create(
 
 Declare `context_window_tokens` in the deployment's capabilities so the context engine knows the budget.
 
-## Knowledge retrieval
+### Knowledge retrieval
 
 ```python
 from hollis.adapters.sqlite_knowledge import SqliteKnowledgeStore
@@ -200,12 +226,12 @@ final = await runner.execute(run.run_id)
 final.grounding  # per-claim support for the answer's citations
 ```
 
-## Quickstart
+## Development
 
-Requires [uv](https://docs.astral.sh/uv/) and Python ≥ 3.12. No API key is needed for development or tests.
+Requires [uv](https://docs.astral.sh/uv/) and Python ≥ 3.12. No API key is needed for development or tests. Changing the web app also needs Node 22.12+ ([development](docs/development.md)).
 
 ```bash
-make sync              # install locked dependencies (dev includes all provider extras)
+make sync              # install locked dependencies (dev includes all extras)
 make check             # format check, lint, type check (strict), tests, offline
 uv run hollis --version
 ```
@@ -222,8 +248,10 @@ HOLLIS_LIVE_TESTS=1 ANTHROPIC_API_KEY=... uv run pytest tests/live -m live -ra
 
 ## Documentation
 
+- [Installation](docs/guides/installation.md) · [Quickstart](docs/guides/quickstart.md) · [SDK](docs/guides/sdk.md) · [Web app](docs/guides/web.md) · [Running a shared server](docs/guides/deployment.md) · [Examples](examples/)
+- Reference: [CLI](docs/reference/cli.md) · [REST API](docs/reference/rest-api.md) · [Configuration](docs/reference/configuration.md) · [Brand guide](brand/README.md)
 - [Vision and scope](docs/product/vision.md) · [Requirements](docs/product/requirements.md) · [Roadmap](docs/product/roadmap.md)
 - [Architecture overview](docs/architecture/overview.md) · [Model compatibility](docs/architecture/model-compatibility.md) · [Testing strategy](docs/architecture/testing.md) · [Memory evaluation](docs/architecture/evaluation.md) · [RAG evaluation](docs/architecture/rag-evaluation.md)
-- [Decision records](docs/decisions/) · Plans: [M1](docs/plans/m1-runtime-core.md), [M2 gateway](docs/plans/m2-gateway.md), [M2 Anthropic](docs/plans/m2-anthropic.md), [M3 tools](docs/plans/m3-tools.md), [M4 context and memory](docs/plans/m4-context-memory.md), [M5 knowledge](docs/plans/m5-knowledge.md)
+- [Decision records](docs/decisions/) · Plans: [M1](docs/plans/m1-runtime-core.md), [M2 gateway](docs/plans/m2-gateway.md), [M2 Anthropic](docs/plans/m2-anthropic.md), [M3 tools](docs/plans/m3-tools.md), [M4 context and memory](docs/plans/m4-context-memory.md), [M5 knowledge](docs/plans/m5-knowledge.md), [M6 product](docs/plans/m6-product.md)
 - [Development process](docs/development.md)
 - [Research notes](docs/research/)
