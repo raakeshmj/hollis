@@ -17,6 +17,7 @@ from hollis.platform.errors import (
     Unauthenticated,
     Unavailable,
 )
+from hollis.platform.schemas import Plan, PlanStep
 from hollis.sdk.client import AsyncHollis
 from hollis.sdk.client import RunHandle as AsyncRunHandle
 from hollis.sdk.sync import Hollis, RunHandle
@@ -29,6 +30,8 @@ __all__ = [
     "Hollis",
     "InvalidRequest",
     "NotFound",
+    "Plan",
+    "PlanStep",
     "PlatformError",
     "RunHandle",
     "Unauthenticated",

@@ -184,3 +184,23 @@ async def test_following_a_run_survives_a_dropped_connection(
     assert transport.resumed_from == ["2", "2"], "the retry resumes after the last event seen"
     assert events[0].sequence == 3
     assert events[-1].type == "run_completed"
+
+
+async def test_orchestration_through_the_sdk(client: AsyncHollis, platform: Platform) -> None:
+    from hollis import Plan, PlanStep
+
+    await client.agents.create(name="researcher", model="demo")
+    await client.agents.create(name="lead", model="demo", delegates=("researcher",))
+    run = await client.runs.start("@researcher what is hollis?", agent="lead")
+    assert (await run.wait(timeout_s=20)).phase is RunPhase.COMPLETED
+    tree = await run.tree()
+    assert [n.run.agent for n in tree.nodes] == ["lead", "researcher"]
+    assert tree.nodes[1].report is not None
+    roots = await client.runs.list(roots=True)
+    assert [r.run_id for r in roots.items] == [run.id]
+
+    plan = Plan(steps=(PlanStep(id="ask", agent="researcher", objective="what is hollis?"),))
+    planned = await client.runs.start("Plan it", plan=plan)
+    assert (await planned.wait(timeout_s=20)).phase is RunPhase.COMPLETED
+    assert planned.summary.model == "workflow"
+    assert len((await planned.tree()).nodes) == 2

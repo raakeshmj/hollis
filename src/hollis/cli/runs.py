@@ -4,7 +4,9 @@ import asyncio
 import contextlib
 import json
 import sys
+import tomllib
 from collections.abc import Callable
+from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -13,7 +15,15 @@ import click
 from hollis.cli.context import EXIT_RUN, State, json_option, pass_state
 from hollis.cli.render import Console, ago, duration, short_id, tokens
 from hollis.platform.errors import InvalidRequest, NotFound
-from hollis.platform.schemas import Approval, EventView, RunDetail, RunPhase, RunSummary
+from hollis.platform.schemas import (
+    Approval,
+    EventView,
+    OrchestrationView,
+    Plan,
+    RunDetail,
+    RunPhase,
+    RunSummary,
+)
 
 if TYPE_CHECKING:
     from hollis.sdk import AsyncHollis, Hollis
@@ -239,6 +249,12 @@ def follow(
 )
 @click.option("--instructions", help="With --model: system instructions (or @file).")
 @click.option(
+    "--plan",
+    "plan_file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Run a fixed plan of delegations (TOML or JSON file) on the workflow coordinator.",
+)
+@click.option(
     "--session", "-s", help="Conversation name: runs in a session share a private memory scope."
 )
 @click.option(
@@ -262,6 +278,7 @@ def run_command(
     model: str | None,
     tools: tuple[str, ...],
     instructions: str | None,
+    plan_file: Path | None,
     session: str | None,
     approve: str,
     detach: bool,
@@ -275,6 +292,8 @@ def run_command(
       hollis run "summarize docs/handbook.md"
       hollis run -a reviewer --session pr-42 "what changed since yesterday?"
       hollis run --approve stop "write notes.txt: done"   # leave approvals for later
+      hollis run -a lead "@researcher find X and @analyst check Y"   # demo model delegates
+      hollis run --plan release.toml "Prepare the release brief"
     """
     client = state.client()
     if detach and state.embedded:
@@ -290,6 +309,7 @@ def run_command(
         tools=tools,
         instructions=_text_or_file(instructions),
         session=session,
+        plan=read_plan(plan_file) if plan_file is not None else None,
     )
     console = state.console
     if detach:
@@ -329,6 +349,17 @@ def run_command(
     return EXIT_RUN[summary.phase]
 
 
+def read_plan(path: Path) -> Plan:
+    """A plan from TOML (`[[steps]]` tables) or JSON."""
+    text = path.read_text(encoding="utf-8")
+    try:
+        if path.suffix == ".json":
+            return Plan.model_validate_json(text)
+        return Plan.model_validate(tomllib.loads(text))
+    except (ValueError, tomllib.TOMLDecodeError) as exc:
+        raise click.BadParameter(f"{path}: {exc}", param_hint="--plan") from exc
+
+
 def _text_or_file(value: str | None) -> str | None:
     if value is None or not value.startswith("@"):
         return value
@@ -361,13 +392,14 @@ def _resolve(client: "Hollis", run: str) -> UUID:
 @runs.command("list")
 @click.option("--phase", type=click.Choice([p.value for p in RunPhase]))
 @click.option("--agent")
+@click.option("--roots", is_flag=True, help="Leave out runs another run delegated.")
 @click.option("--limit", default=20, show_default=True)
 @json_option
 @pass_state
-def runs_list(state: State, phase: str | None, agent: str | None, limit: int) -> None:
+def runs_list(state: State, phase: str | None, agent: str | None, roots: bool, limit: int) -> None:
     """Recent runs, newest first."""
     page = state.client().runs.list(
-        phase=RunPhase(phase) if phase else None, agent=agent, limit=limit
+        phase=RunPhase(phase) if phase else None, agent=agent, roots=roots, limit=limit
     )
     console = state.console
     if console.json:
@@ -377,10 +409,11 @@ def runs_list(state: State, phase: str | None, agent: str | None, limit: int) ->
         ["run", "phase", "agent", "input", "tools", "updated"],
         [
             [
-                short_id(r.run_id),
+                ("  " * r.depth) + short_id(r.run_id),
                 console.phase(r.phase),
-                r.agent or "-",
-                r.input_preview,
+                (r.agent or ("plan" if r.model == "workflow" else "-"))
+                + (f" +{r.children}" if r.children else ""),
+                r.objective or r.input_preview,
                 str(r.tool_calls),
                 ago(r.updated_at),
             ]
@@ -419,6 +452,16 @@ def show_detail(console: Console, detail: RunDetail) -> None:
                 + (f" · session {s.session}" if s.session else ""),
             ),
             ("input", detail.input if len(detail.input) < 300 else detail.input[:300] + "…"),
+            (
+                "delegated by",
+                " > ".join(
+                    f"{step.agent or 'run'} {short_id(step.run_id)}" for step in detail.lineage
+                ),
+            ),
+            (
+                "delegated",
+                f"{s.children} runs (hollis runs tree {short_id(s.run_id)})" if s.children else "",
+            ),
             ("model", f"{s.model} ({s.provider}, {s.protocol})"),
             ("tools", ", ".join(detail.tools) or "none"),
             ("memory", ", ".join(detail.memory_access.read) if detail.memory_access else ""),
@@ -479,6 +522,75 @@ def show_detail(console: Console, detail: RunDetail) -> None:
     if detail.answer:
         console.print()
         console.print(detail.answer)
+
+
+@runs.command("tree")
+@click.argument("run")
+@json_option
+@pass_state
+def runs_tree(state: State, run: str) -> None:
+    """The orchestration a run belongs to: who delegated what, outcomes, usage, refusals."""
+    client = state.client()
+    tree = client.runs.get(_resolve(client, run)).tree()
+    if state.console.json:
+        state.console.data(tree)
+        return
+    show_tree(state.console, tree)
+
+
+def show_tree(console: Console, tree: OrchestrationView) -> None:
+    t = tree.totals
+    console.print(
+        console.style(f"orchestration {short_id(tree.root_run_id)}", "bold")
+        + console.style(
+            f"  {t.runs} runs · depth {t.max_depth} · "
+            f"{tokens(t.input_tokens + t.output_tokens)} tokens "
+            f"(coordination {tokens(t.coordinator_tokens)}) · "
+            f"{duration(t.wall_s)} wall, {duration(t.agent_s)} agent time",
+            "dim",
+        )
+    )
+    for node in tree.nodes:
+        s = node.run
+        indent = "  " + "   " * s.depth + ("└─ " if s.depth else "")
+        name = s.agent or ("plan" if s.model == "workflow" else "run")
+        parts = [
+            console.phase(s.phase),
+            f"{tokens(s.usage.input_tokens + s.usage.output_tokens)} tok",
+        ]
+        report = node.report
+        if report is not None and report.verification is not None and report.verification.claims:
+            v = report.verification
+            parts.append(f"{v.supported}/{v.claims} supported")
+        if report is not None and report.side_effects_unknown:
+            parts.append("unknown side effects: " + ", ".join(report.side_effects_unknown))
+        if node.waiting_on:
+            parts.append(f"waiting on {node.waiting_on}")
+        line = f"{indent}{console.style(name, 'bold')} {short_id(s.run_id)}  " + " · ".join(parts)
+        console.print(line)
+        if s.objective:
+            console.print(console.style(f"{indent}   {s.objective[:120]}", "dim"))
+        if report is not None and report.outcome != "completed" and report.reason:
+            console.print(
+                console.style(f"{indent}   {report.outcome}: {report.reason[:160]}", "brass")
+            )
+        if node.narrowed:
+            console.print(
+                console.style(f"{indent}   not granted: {', '.join(node.narrowed)}", "dim")
+            )
+    for refusal in tree.refusals:
+        console.print(
+            console.style(
+                f"  refused: {refusal.agent} (from {short_id(refusal.parent_run_id)}): "
+                f"{refusal.reason}",
+                "brass",
+            )
+        )
+    for item in tree.disagreements:
+        answers = "; ".join(item.answers)
+        console.print(console.style(f"  disagreement on {item.objective!r}: {answers}", "brass"))
+    if tree.hidden:
+        console.note(f"{tree.hidden} runs in this orchestration are not visible to you.")
 
 
 @runs.command("events")

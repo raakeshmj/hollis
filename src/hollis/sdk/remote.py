@@ -37,6 +37,7 @@ from hollis.platform.schemas import (
     McpServerView,
     MemoryDetail,
     MemoryView,
+    OrchestrationView,
     Page,
     PrincipalInput,
     PrincipalView,
@@ -265,20 +266,32 @@ class RemoteBackend:
     # --- runs and approvals -------------------------------------------------------------------
 
     async def start_run(self, spec: StartRun) -> RunSummary:
-        return await self._model(RunSummary, "POST", "/v1/runs", body=spec.model_dump(mode="json"))
+        body = spec.model_dump(mode="json", exclude_none=True)
+        return await self._model(RunSummary, "POST", "/v1/runs", body=body)
 
     async def runs(
-        self, *, phase: RunPhase | None, agent: str | None, limit: int, offset: int
+        self,
+        *,
+        phase: RunPhase | None,
+        agent: str | None,
+        limit: int,
+        offset: int,
+        roots: bool = False,
     ) -> Page[RunSummary]:
         params: dict[str, Any] = {"limit": limit, "offset": offset}
         if phase is not None:
             params["phase"] = phase.value
         if agent is not None:
             params["agent"] = agent
+        if roots:
+            params["roots"] = "true"
         return await self._json(_page, "GET", "/v1/runs", params=params)
 
     async def run(self, run_id: UUID) -> RunDetail:
         return await self._model(RunDetail, "GET", f"/v1/runs/{run_id}")
+
+    async def run_tree(self, run_id: UUID) -> OrchestrationView:
+        return await self._model(OrchestrationView, "GET", f"/v1/runs/{run_id}/tree")
 
     async def run_summary(self, run_id: UUID) -> RunSummary:
         return await self._model(RunSummary, "GET", f"/v1/runs/{run_id}/summary")

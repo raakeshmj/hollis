@@ -1323,6 +1323,36 @@
         "title": "DeploymentView",
         "type": "object"
       },
+      "DisagreementView": {
+        "properties": {
+          "answers": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Answers",
+            "type": "array"
+          },
+          "objective": {
+            "title": "Objective",
+            "type": "string"
+          },
+          "runs": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Runs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "objective",
+          "runs",
+          "answers"
+        ],
+        "title": "DisagreementView",
+        "type": "object"
+      },
       "EventView": {
         "properties": {
           "occurred_at": {
@@ -2184,6 +2214,215 @@
         "title": "ModelCallView",
         "type": "object"
       },
+      "OrchestrationNode": {
+        "properties": {
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "inputs": {
+            "default": [],
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Inputs",
+            "type": "array"
+          },
+          "narrowed": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Narrowed",
+            "type": "array"
+          },
+          "parent_invocation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Invocation Id"
+          },
+          "report": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReportView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "run": {
+            "$ref": "#/components/schemas/RunSummary"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "waiting_on": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waiting On"
+          }
+        },
+        "required": [
+          "run",
+          "started_at"
+        ],
+        "title": "OrchestrationNode",
+        "type": "object"
+      },
+      "OrchestrationTotals": {
+        "properties": {
+          "agent_s": {
+            "title": "Agent S",
+            "type": "number"
+          },
+          "coordinator_tokens": {
+            "title": "Coordinator Tokens",
+            "type": "integer"
+          },
+          "failed": {
+            "title": "Failed",
+            "type": "integer"
+          },
+          "input_tokens": {
+            "title": "Input Tokens",
+            "type": "integer"
+          },
+          "max_depth": {
+            "title": "Max Depth",
+            "type": "integer"
+          },
+          "output_tokens": {
+            "title": "Output Tokens",
+            "type": "integer"
+          },
+          "phases": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Phases",
+            "type": "object"
+          },
+          "runs": {
+            "title": "Runs",
+            "type": "integer"
+          },
+          "waiting_approvals": {
+            "title": "Waiting Approvals",
+            "type": "integer"
+          },
+          "wall_s": {
+            "title": "Wall S",
+            "type": "number"
+          },
+          "worker_tokens": {
+            "title": "Worker Tokens",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "runs",
+          "phases",
+          "input_tokens",
+          "output_tokens",
+          "coordinator_tokens",
+          "worker_tokens",
+          "wall_s",
+          "agent_s",
+          "max_depth",
+          "waiting_approvals",
+          "failed"
+        ],
+        "title": "OrchestrationTotals",
+        "type": "object"
+      },
+      "OrchestrationView": {
+        "properties": {
+          "disagreements": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/DisagreementView"
+            },
+            "title": "Disagreements",
+            "type": "array"
+          },
+          "focus_run_id": {
+            "format": "uuid",
+            "title": "Focus Run Id",
+            "type": "string"
+          },
+          "hidden": {
+            "default": 0,
+            "title": "Hidden",
+            "type": "integer"
+          },
+          "limits": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DelegationLimits"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/OrchestrationNode"
+            },
+            "title": "Nodes",
+            "type": "array"
+          },
+          "refusals": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/RefusalView"
+            },
+            "title": "Refusals",
+            "type": "array"
+          },
+          "root_run_id": {
+            "format": "uuid",
+            "title": "Root Run Id",
+            "type": "string"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/OrchestrationTotals"
+          }
+        },
+        "required": [
+          "root_run_id",
+          "focus_run_id",
+          "limits",
+          "nodes",
+          "totals"
+        ],
+        "title": "OrchestrationView",
+        "type": "object"
+      },
       "Page_RunSummary_": {
         "properties": {
           "items": {
@@ -2527,6 +2766,30 @@
         "title": "RecalledMemory",
         "type": "object"
       },
+      "RefusalView": {
+        "properties": {
+          "agent": {
+            "title": "Agent",
+            "type": "string"
+          },
+          "parent_run_id": {
+            "format": "uuid",
+            "title": "Parent Run Id",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "parent_run_id",
+          "agent",
+          "reason"
+        ],
+        "title": "RefusalView",
+        "type": "object"
+      },
       "RememberInput": {
         "additionalProperties": false,
         "properties": {
@@ -2595,6 +2858,98 @@
           "content"
         ],
         "title": "RememberInput",
+        "type": "object"
+      },
+      "ReportView": {
+        "description": "What the delegating run received: Hollis-observed facts plus the child's self-report.",
+        "properties": {
+          "answer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answer"
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
+          "evidence": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "open_questions": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Open Questions",
+            "type": "array"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "side_effects_unknown": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Side Effects Unknown",
+            "type": "array"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "verification": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VerificationView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "outcome"
+        ],
+        "title": "ReportView",
         "type": "object"
       },
       "ResolvedItem": {
@@ -4332,6 +4687,37 @@
         "title": "ValidationError",
         "type": "object"
       },
+      "VerificationView": {
+        "properties": {
+          "claims": {
+            "default": 0,
+            "title": "Claims",
+            "type": "integer"
+          },
+          "fabricated": {
+            "default": 0,
+            "title": "Fabricated",
+            "type": "integer"
+          },
+          "supported": {
+            "default": 0,
+            "title": "Supported",
+            "type": "integer"
+          },
+          "uncited": {
+            "default": 0,
+            "title": "Uncited",
+            "type": "integer"
+          },
+          "weak": {
+            "default": 0,
+            "title": "Weak",
+            "type": "integer"
+          }
+        },
+        "title": "VerificationView",
+        "type": "object"
+      },
       "WriteResultView": {
         "properties": {
           "action": {
@@ -5912,6 +6298,7 @@
     },
     "/v1/runs": {
       "get": {
+        "description": "Runs the caller can see, newest first. `roots=true` leaves out delegated runs.",
         "operationId": "runs_v1_runs_get",
         "parameters": [
           {
@@ -5944,6 +6331,16 @@
                 }
               ],
               "title": "Agent"
+            }
+          },
+          {
+            "in": "query",
+            "name": "roots",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Roots",
+              "type": "boolean"
             }
           },
           {
@@ -6498,6 +6895,50 @@
           }
         },
         "summary": "Run Summary",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/v1/runs/{run_id}/tree": {
+      "get": {
+        "description": "The orchestration this run belongs to: its root, every run delegated below it that the\ncaller can see, reports, refusals, disagreements and totals.",
+        "operationId": "run_tree_v1_runs__run_id__tree_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrchestrationView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Tree",
         "tags": [
           "runs"
         ]

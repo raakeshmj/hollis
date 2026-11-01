@@ -119,6 +119,17 @@ def agents_show(state: State, name: str) -> None:
                     else "workspace default",
                 ),
                 ("episodes", "recorded" if agent.record_episodes else "off"),
+                ("delegates", ", ".join(agent.delegates) or "none"),
+                (
+                    "delegation",
+                    ", ".join(
+                        f"{k.replace('_', ' ')} {v}"
+                        for k, v in agent.delegation.model_dump(exclude_defaults=True).items()
+                    )
+                    or "workspace limits"
+                    if agent.delegation
+                    else "workspace limits",
+                ),
                 (
                     "version",
                     f"{agent.version} · {agent.updated_at:%Y-%m-%d %H:%M} · "
@@ -175,6 +186,22 @@ def _agent_options(command: Any) -> Any:
         ),
         click.option("--max-output-tokens", type=int, help="Output budget per model call."),
         click.option(
+            "--delegate",
+            "delegates",
+            multiple=True,
+            help="An agent it may delegate bounded tasks to (repeatable).",
+        ),
+        click.option(
+            "--max-depth",
+            type=int,
+            help="Delegation depth limit for its runs.",
+        ),
+        click.option(
+            "--token-budget",
+            type=int,
+            help="Tokens its run and everything it delegates may use together.",
+        ),
+        click.option(
             "--record-episodes/--no-record-episodes",
             default=None,
             help="Write an episode memory after each run.",
@@ -211,6 +238,13 @@ def _agent_fields(**values: Any) -> dict[str, Any]:
         fields["budget"] = {"max_output_tokens": values["max_output_tokens"]}
     if values.get("record_episodes") is not None:
         fields["record_episodes"] = values["record_episodes"]
+    if values.get("delegates"):
+        fields["delegates"] = tuple(values["delegates"])
+    limits = {
+        key: values[key] for key in ("max_depth", "token_budget") if values.get(key) is not None
+    }
+    if limits:
+        fields["delegation"] = limits
     return fields
 
 
@@ -226,6 +260,8 @@ def agents_create(state: State, name: str, **values: Any) -> None:
     Example:
       hollis agents create reviewer -m demo --tool fs_read_file --tool knowledge_search \\
         --collection docs --memory team:review --instructions @prompts/reviewer.md
+      hollis agents create lead -m demo --delegate researcher --delegate reviewer \\
+        --collection docs --token-budget 200000
     """
     fields = _agent_fields(**values)
     if "model" not in fields:

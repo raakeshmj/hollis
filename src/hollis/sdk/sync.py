@@ -32,7 +32,9 @@ from hollis.platform.schemas import (
     McpServerView,
     MemoryDetail,
     MemoryView,
+    OrchestrationView,
     Page,
+    Plan,
     PrincipalInput,
     PrincipalView,
     ProbeResult,
@@ -154,6 +156,9 @@ class RunHandle:
     def artifact(self, artifact_id: str, *, offset: int = 0, length: int = 20_000) -> ArtifactView:
         return self._portal.call(self._handle.artifact(artifact_id, offset=offset, length=length))
 
+    def tree(self) -> OrchestrationView:
+        return self._portal.call(self._handle.tree())
+
 
 class Runs:
     def __init__(self, portal: _Portal, runs: aio.Runs) -> None:
@@ -169,6 +174,7 @@ class Runs:
         tools: tuple[str, ...] = (),
         instructions: str | None = None,
         session: str | None = None,
+        plan: Plan | None = None,
     ) -> RunHandle:
         handle = self._portal.call(
             self._runs.start(
@@ -178,6 +184,7 @@ class Runs:
                 tools=tools,
                 instructions=instructions,
                 session=session,
+                plan=plan,
             )
         )
         return RunHandle(self._portal, handle)
@@ -190,11 +197,12 @@ class Runs:
         *,
         phase: RunPhase | None = None,
         agent: str | None = None,
+        roots: bool = False,
         limit: int = 50,
         offset: int = 0,
     ) -> Page[RunSummary]:
         return self._portal.call(
-            self._runs.list(phase=phase, agent=agent, limit=limit, offset=offset)
+            self._runs.list(phase=phase, agent=agent, roots=roots, limit=limit, offset=offset)
         )
 
 

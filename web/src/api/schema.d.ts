@@ -523,7 +523,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Runs */
+        /**
+         * Runs
+         * @description Runs the caller can see, newest first. `roots=true` leaves out delegated runs.
+         */
         get: operations["runs_v1_runs_get"];
         put?: never;
         /**
@@ -677,6 +680,27 @@ export interface paths {
          *     finished, waits for approval or stopped.
          */
         get: operations["run_summary_v1_runs__run_id__summary_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/runs/{run_id}/tree": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Run Tree
+         * @description The orchestration this run belongs to: its root, every run delegated below it that the
+         *     caller can see, reports, refusals, disagreements and totals.
+         */
+        get: operations["run_tree_v1_runs__run_id__tree_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1449,6 +1473,15 @@ export interface components {
             /** Tasks */
             tasks: string[];
         };
+        /** DisagreementView */
+        DisagreementView: {
+            /** Answers */
+            answers: string[];
+            /** Objective */
+            objective: string;
+            /** Runs */
+            runs: string[];
+        };
         /** EventView */
         EventView: {
             /**
@@ -1772,6 +1805,91 @@ export interface components {
             text?: string | null;
             usage?: components["schemas"]["UsageView"] | null;
         };
+        /** OrchestrationNode */
+        OrchestrationNode: {
+            /** Finished At */
+            finished_at?: string | null;
+            /**
+             * Inputs
+             * @default []
+             */
+            inputs: string[];
+            /**
+             * Narrowed
+             * @default []
+             */
+            narrowed: string[];
+            /** Parent Invocation Id */
+            parent_invocation_id?: string | null;
+            report?: components["schemas"]["ReportView"] | null;
+            run: components["schemas"]["RunSummary"];
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /** Waiting On */
+            waiting_on?: string | null;
+        };
+        /** OrchestrationTotals */
+        OrchestrationTotals: {
+            /** Agent S */
+            agent_s: number;
+            /** Coordinator Tokens */
+            coordinator_tokens: number;
+            /** Failed */
+            failed: number;
+            /** Input Tokens */
+            input_tokens: number;
+            /** Max Depth */
+            max_depth: number;
+            /** Output Tokens */
+            output_tokens: number;
+            /** Phases */
+            phases: {
+                [key: string]: number;
+            };
+            /** Runs */
+            runs: number;
+            /** Waiting Approvals */
+            waiting_approvals: number;
+            /** Wall S */
+            wall_s: number;
+            /** Worker Tokens */
+            worker_tokens: number;
+        };
+        /** OrchestrationView */
+        OrchestrationView: {
+            /**
+             * Disagreements
+             * @default []
+             */
+            disagreements: components["schemas"]["DisagreementView"][];
+            /**
+             * Focus Run Id
+             * Format: uuid
+             */
+            focus_run_id: string;
+            /**
+             * Hidden
+             * @default 0
+             */
+            hidden: number;
+            limits: components["schemas"]["DelegationLimits"] | null;
+            /** Nodes */
+            nodes: components["schemas"]["OrchestrationNode"][];
+            /**
+             * Refusals
+             * @default []
+             */
+            refusals: components["schemas"]["RefusalView"][];
+            /**
+             * Root Run Id
+             * Format: uuid
+             */
+            root_run_id: string;
+            totals: components["schemas"]["OrchestrationTotals"];
+        };
         /** Page[RunSummary] */
         Page_RunSummary_: {
             /** Items */
@@ -1902,6 +2020,18 @@ export interface components {
             /** Valid Until */
             valid_until?: string | null;
         };
+        /** RefusalView */
+        RefusalView: {
+            /** Agent */
+            agent: string;
+            /**
+             * Parent Run Id
+             * Format: uuid
+             */
+            parent_run_id: string;
+            /** Reason */
+            reason: string;
+        };
         /** RememberInput */
         RememberInput: {
             /**
@@ -1922,6 +2052,38 @@ export interface components {
             subject?: string | null;
             /** Valid Until */
             valid_until?: string | null;
+        };
+        /**
+         * ReportView
+         * @description What the delegating run received: Hollis-observed facts plus the child's self-report.
+         */
+        ReportView: {
+            /** Answer */
+            answer?: string | null;
+            /** Confidence */
+            confidence?: string | null;
+            /**
+             * Evidence
+             * @default []
+             */
+            evidence: string[];
+            /**
+             * Open Questions
+             * @default []
+             */
+            open_questions: string[];
+            /** Outcome */
+            outcome: string;
+            /** Reason */
+            reason?: string | null;
+            /**
+             * Side Effects Unknown
+             * @default []
+             */
+            side_effects_unknown: string[];
+            /** Status */
+            status?: string | null;
+            verification?: components["schemas"]["VerificationView"] | null;
         };
         /** ResolvedItem */
         ResolvedItem: {
@@ -2559,6 +2721,34 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+        };
+        /** VerificationView */
+        VerificationView: {
+            /**
+             * Claims
+             * @default 0
+             */
+            claims: number;
+            /**
+             * Fabricated
+             * @default 0
+             */
+            fabricated: number;
+            /**
+             * Supported
+             * @default 0
+             */
+            supported: number;
+            /**
+             * Uncited
+             * @default 0
+             */
+            uncited: number;
+            /**
+             * Weak
+             * @default 0
+             */
+            weak: number;
         };
         /** WriteResultView */
         WriteResultView: {
@@ -3667,6 +3857,7 @@ export interface operations {
             query?: {
                 phase?: components["schemas"]["RunPhase"] | null;
                 agent?: string | null;
+                roots?: boolean;
                 limit?: number;
                 offset?: number;
             };
@@ -3985,6 +4176,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_tree_v1_runs__run_id__tree_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrchestrationView"];
                 };
             };
             /** @description Validation Error */

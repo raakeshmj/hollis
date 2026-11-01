@@ -64,6 +64,7 @@ from hollis.platform.schemas import (
     McpServerView,
     MemoryDetail,
     MemoryView,
+    OrchestrationView,
     Page,
     PrincipalInput,
     PrincipalView,
@@ -442,10 +443,14 @@ async def runs(
     caller: Caller,
     phase: RunPhase | None = None,
     agent: str | None = None,
+    roots: bool = False,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> Page[RunSummary]:
-    return await platform.runs(caller, phase=phase, agent=agent, limit=limit, offset=offset)
+    """Runs the caller can see, newest first. `roots=true` leaves out delegated runs."""
+    return await platform.runs(
+        caller, phase=phase, agent=agent, roots=roots, limit=limit, offset=offset
+    )
 
 
 @api.post("/runs", tags=["runs"], status_code=202)
@@ -461,6 +466,13 @@ async def start_run(
 @api.get("/runs/{run_id}", tags=["runs"])
 async def run(run_id: UUID, platform: Plat, caller: Caller) -> RunDetail:
     return await platform.run(caller, run_id)
+
+
+@api.get("/runs/{run_id}/tree", tags=["runs"])
+async def run_tree(run_id: UUID, platform: Plat, caller: Caller) -> OrchestrationView:
+    """The orchestration this run belongs to: its root, every run delegated below it that the
+    caller can see, reports, refusals, disagreements and totals."""
+    return await platform.run_tree(caller, run_id)
 
 
 @api.get("/runs/{run_id}/summary", tags=["runs"])

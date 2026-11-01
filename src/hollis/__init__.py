@@ -14,14 +14,14 @@ from typing import TYPE_CHECKING, Any
 __version__ = version("hollis")
 
 if TYPE_CHECKING:
-    from hollis.sdk import AsyncHollis, Hollis
+    from hollis.sdk import AsyncHollis, Hollis, Plan, PlanStep
 
-__all__ = ["AsyncHollis", "Hollis", "__version__", "main"]
+__all__ = ["AsyncHollis", "Hollis", "Plan", "PlanStep", "__version__", "main"]
 
 
 def __getattr__(name: str) -> Any:
     # The SDK loads the whole platform; import it on first use so `import hollis` stays light.
-    if name in ("Hollis", "AsyncHollis"):
+    if name in ("Hollis", "AsyncHollis", "Plan", "PlanStep"):
         from hollis import sdk
 
         return getattr(sdk, name)

@@ -548,7 +548,7 @@ async def test_an_interrupted_delegation_reattaches_to_its_child_after_restart(
 async def test_children_cannot_outlive_a_delegation_that_stopped_waiting(
     platform: Platform, admin: Principal
 ) -> None:
-    await add_team(platform, admin, delegation=DelegationLimits(wait_s=0.3))
+    await add_team(platform, admin, delegation=DelegationLimits(wait_s=1.0))
     waiting = await run_lead(platform, admin, "@writer write a.txt: x")
     [delegation] = await platform.approvals(admin)
     await platform.decide(
@@ -562,7 +562,7 @@ async def test_children_cannot_outlive_a_delegation_that_stopped_waiting(
     assert child.report is not None
     assert child.report.outcome == "timed_out"
     assert child.report.reason is not None
-    assert "approval of fs_write_file" in child.report.reason
+    assert "the delegating run stopped waiting after 1s" in child.report.reason
     assert await platform.approvals(admin) == []
 
 

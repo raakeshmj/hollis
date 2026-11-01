@@ -223,3 +223,45 @@ async def test_a_new_server_revokes_the_token_a_crashed_one_left(tmp_path: Path)
         assert not await retire_stale_marker(platform, tmp_path), "already revoked"
     finally:
         await platform.close()
+
+
+def test_delegation_from_the_cli(workspace: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli(capsys, "agents", "create", "researcher", "-m", "demo")[0] == 0
+    code, _, err = cli(
+        capsys,
+        "agents",
+        "create",
+        "lead",
+        "-m",
+        "demo",
+        "--delegate",
+        "researcher",
+        "--max-depth",
+        "1",
+    )
+    assert code == 0, err
+    shown = cli_json(capsys, "agents", "show", "lead")
+    assert shown["delegates"] == ["researcher"]
+    assert shown["delegation"]["max_depth"] == 1
+
+    code, out, err = cli(capsys, "run", "-a", "lead", "@researcher what is hollis?")
+    assert code == 0, err
+    assert "From the team" in out
+    [root] = cli_json(capsys, "runs", "list", "--roots")["items"]
+    assert root["children"] == 1
+
+    code, out, _ = cli(capsys, "runs", "tree", root["run_id"][:8])
+    assert code == 0
+    assert "orchestration" in out
+    assert "researcher" in out
+    tree = cli_json(capsys, "runs", "tree", root["run_id"])
+    assert len(tree["nodes"]) == 2
+
+    plan = workspace / "plan.toml"
+    plan.write_text('[[steps]]\nid = "ask"\nagent = "researcher"\nobjective = "what is hollis?"\n')
+    code, out, err = cli(capsys, "run", "--plan", str(plan), "Plan it")
+    assert code == 0, err
+    assert "Plan finished: 1 of 1 steps completed." in out
+    bad = workspace / "bad.toml"
+    bad.write_text('[[steps]]\nid = "a"\nagent = "nobody"\nobjective = "x"\n')
+    assert cli(capsys, "run", "--plan", str(bad), "x")[0] != 0

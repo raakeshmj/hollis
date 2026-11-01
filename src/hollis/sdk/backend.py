@@ -32,6 +32,7 @@ from hollis.platform.schemas import (
     McpServerView,
     MemoryDetail,
     MemoryView,
+    OrchestrationView,
     Page,
     PrincipalInput,
     PrincipalView,
@@ -102,9 +103,16 @@ class Backend(Protocol):
     # runs and approvals
     async def start_run(self, spec: StartRun) -> RunSummary: ...
     async def runs(
-        self, *, phase: RunPhase | None, agent: str | None, limit: int, offset: int
+        self,
+        *,
+        phase: RunPhase | None,
+        agent: str | None,
+        limit: int,
+        offset: int,
+        roots: bool = False,
     ) -> Page[RunSummary]: ...
     async def run(self, run_id: UUID) -> RunDetail: ...
+    async def run_tree(self, run_id: UUID) -> OrchestrationView: ...
     async def run_summary(self, run_id: UUID) -> RunSummary: ...
     async def wait_run(self, run_id: UUID, timeout_s: float) -> RunSummary: ...
     async def run_events(self, run_id: UUID, after: int) -> list[EventView]: ...
@@ -257,14 +265,23 @@ class LocalBackend:
         return await self.platform.start_run(self._me, spec)
 
     async def runs(
-        self, *, phase: RunPhase | None, agent: str | None, limit: int, offset: int
+        self,
+        *,
+        phase: RunPhase | None,
+        agent: str | None,
+        limit: int,
+        offset: int,
+        roots: bool = False,
     ) -> Page[RunSummary]:
         return await self.platform.runs(
-            self._me, phase=phase, agent=agent, limit=limit, offset=offset
+            self._me, phase=phase, agent=agent, roots=roots, limit=limit, offset=offset
         )
 
     async def run(self, run_id: UUID) -> RunDetail:
         return await self.platform.run(self._me, run_id)
+
+    async def run_tree(self, run_id: UUID) -> OrchestrationView:
+        return await self.platform.run_tree(self._me, run_id)
 
     async def run_summary(self, run_id: UUID) -> RunSummary:
         return await self.platform.run_summary(self._me, run_id)

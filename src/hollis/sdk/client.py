@@ -42,7 +42,9 @@ from hollis.platform.schemas import (
     McpServerView,
     MemoryDetail,
     MemoryView,
+    OrchestrationView,
     Page,
+    Plan,
     PrincipalInput,
     PrincipalView,
     ProbeResult,
@@ -155,6 +157,10 @@ class RunHandle:
     ) -> ArtifactView:
         return await self._backend.artifact(self.id, artifact_id, offset, length)
 
+    async def tree(self) -> OrchestrationView:
+        """The orchestration this run belongs to: the root and every run delegated below it."""
+        return await self._backend.run_tree(self.id)
+
 
 class Runs:
     def __init__(self, backend: Backend) -> None:
@@ -169,8 +175,10 @@ class Runs:
         tools: tuple[str, ...] = (),
         instructions: str | None = None,
         session: str | None = None,
+        plan: Plan | None = None,
     ) -> RunHandle:
-        """Start a run of an agent (or, for admins, of a model with tools) in the background."""
+        """Start a run in the background: of an agent; of a fixed `plan` of delegations, run
+        by the deterministic workflow coordinator; or, for admins, of a model with tools."""
         spec = StartRun(
             input=input,
             agent=agent,
@@ -178,6 +186,7 @@ class Runs:
             tools=tools,
             instructions=instructions,
             session=session,
+            plan=plan,
         )
         return RunHandle(self._backend, await self._backend.start_run(spec))
 
@@ -190,10 +199,14 @@ class Runs:
         *,
         phase: RunPhase | None = None,
         agent: str | None = None,
+        roots: bool = False,
         limit: int = 50,
         offset: int = 0,
     ) -> Page[RunSummary]:
-        return await self._backend.runs(phase=phase, agent=agent, limit=limit, offset=offset)
+        """Runs you can see, newest first; `roots=True` leaves out delegated runs."""
+        return await self._backend.runs(
+            phase=phase, agent=agent, roots=roots, limit=limit, offset=offset
+        )
 
 
 class Approvals:
