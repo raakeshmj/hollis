@@ -20,6 +20,7 @@ from hollis.cli.context import (
     json_option,
     pass_state,
     read_server_file,
+    retire_stale_marker,
     running_server,
     server_file,
     write_server_file,
@@ -415,6 +416,7 @@ def serve(
     cli_token: dict[str, str] = {}
 
     async def ready(platform: Platform) -> None:
+        await retire_stale_marker(platform, root)  # a previous server that did not stop cleanly
         admin = await platform.local_admin()
         login = await platform.login_token(admin.name)
         token = await platform.create_token(

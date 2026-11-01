@@ -76,7 +76,7 @@ WantedBy=multi-user.target
 
 Everything is in the workspace directory: `hollis.toml` and `.hollis/*.db` (SQLite). Back up the directory while the server is stopped, or use SQLite's online backup. Databases are not encrypted at rest; protect the directory with file permissions.
 
-While the server runs, `.hollis/server.json` (owner-readable only) holds its address and a token that CLI commands in the workspace use to reach it. The token is revoked when the server stops.
+While the server runs, `.hollis/server.json` (owner-readable only) holds its address and a token that CLI commands in the workspace use to reach it. The token is revoked when the server stops, or, if it stopped without cleaning up, when the next server starts.
 
 ## Limits to know
 

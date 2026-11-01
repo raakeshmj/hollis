@@ -24,6 +24,7 @@ from hollis.platform.errors import NotFound
 from hollis.platform.schemas import RunPhase
 
 if TYPE_CHECKING:
+    from hollis.platform.services import Platform
     from hollis.sdk import Hollis
 
 SERVER_FILE = "server.json"
@@ -134,6 +135,21 @@ def write_server_file(root: Path, *, url: str, token: str, token_id: str) -> Non
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(descriptor, "w") as handle:
         json.dump(body, handle)
+
+
+async def retire_stale_marker(platform: "Platform", root: Path) -> bool:
+    """Revoke the token a previous server left in its marker (it stopped without cleaning up,
+    for example after a crash). Returns True if a token was revoked."""
+    marker = read_server_file(root)
+    token_id = marker.get("token_id") if marker else None
+    if not isinstance(token_id, str):
+        return False
+    admin = await platform.local_admin()
+    try:
+        await platform.revoke_token(admin, token_id)
+    except NotFound:
+        return False
+    return True
 
 
 def read_server_file(root: Path) -> dict[str, Any] | None:

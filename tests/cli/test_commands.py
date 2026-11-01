@@ -198,3 +198,28 @@ def test_completion_scripts_and_the_ascii_mark(
     monkeypatch.setenv("FORCE_COLOR", "1")
     _, colored, _ = cli(capsys, "runs", "list")
     assert ANSI.search(colored) or "No runs yet" in colored
+
+
+async def test_a_new_server_revokes_the_token_a_crashed_one_left(tmp_path: Path) -> None:
+    from hollis.cli.context import retire_stale_marker, write_server_file
+    from hollis.platform.config import initialize
+    from hollis.platform.errors import Unauthenticated
+    from hollis.platform.schemas import TokenInput
+    from hollis.platform.services import Platform
+
+    initialize(tmp_path, "crash")
+    platform = await Platform.open(tmp_path)
+    try:
+        admin = await platform.local_admin()
+        left = await platform.create_token(admin, TokenInput(principal="admin", label="local CLI"))
+        write_server_file(
+            tmp_path, url="http://127.0.0.1:1", token=left.token, token_id=left.token_id
+        )
+        assert oct((tmp_path / ".hollis" / "server.json").stat().st_mode & 0o777) == "0o600"
+
+        assert await retire_stale_marker(platform, tmp_path)
+        with pytest.raises(Unauthenticated):
+            await platform.authenticate(left.token)
+        assert not await retire_stale_marker(platform, tmp_path), "already revoked"
+    finally:
+        await platform.close()
