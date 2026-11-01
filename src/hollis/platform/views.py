@@ -324,6 +324,8 @@ def detail(
         if state.cancellation
         else None,
         deadline=state.deadline,
+        assignment=state.assignment,
+        delegation=state.delegation,
     )
 
 

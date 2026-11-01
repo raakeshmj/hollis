@@ -8,12 +8,13 @@ removed or repurposed.
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any, Literal, Self
 from uuid import UUID
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, JsonValue
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 from hollis.runtime.context import CompactionSummary, ContextPolicy, TokenAccounting
+from hollis.runtime.delegation import Assignment, DelegationLimits
 from hollis.runtime.grounding import GroundingReport
 from hollis.runtime.knowledge import KnowledgeAccess, RetrievedPassage, SourceTrust
 from hollis.runtime.memory import Certainty, MemoryAccess, MemoryKind, RecalledMemory
@@ -233,6 +234,10 @@ class AgentInput(_Input):
     """None uses the workspace default output budget and runtime defaults."""
     context: ContextPolicy = ContextPolicy()
     record_episodes: bool = False
+    delegates: tuple[str, ...] = Field(default=(), max_length=16)
+    """Agents this agent may delegate bounded tasks to (one `delegate_<agent>` tool each)."""
+    delegation: DelegationLimits | None = None
+    """Narrows the workspace's delegation limits for runs of this agent and below."""
 
 
 class Agent(AgentInput):
@@ -247,6 +252,55 @@ class Agent(AgentInput):
 # --- runs -----------------------------------------------------------------------------------------
 
 
+STEP_PATTERN = r"^[a-z0-9][a-z0-9_-]{0,31}$"
+
+
+class PlanStep(_Input):
+    id: str = Field(pattern=STEP_PATTERN)
+    agent: str = Field(pattern=NAME_PATTERN)
+    objective: str = Field(min_length=1, max_length=4000)
+    context: str = Field(default="", max_length=20_000)
+    expected_output: str = Field(default="", max_length=2000)
+    depends_on: tuple[str, ...] = Field(default=(), max_length=8)
+    """Steps that must complete first; their reports are passed to this step verbatim."""
+
+
+class Plan(_Input):
+    """A fixed delegation plan run by the deterministic `workflow` coordinator (ADR-0030):
+    every wave of ready steps is delegated at once, and a step runs only after the steps it
+    depends on completed. Steps asked the same objective have their answers compared."""
+
+    steps: tuple[PlanStep, ...] = Field(min_length=1, max_length=32)
+    answer: Literal["summary", "last"] = "summary"
+    """summary: every step's outcome and answer. last: the answer of the one step nothing
+    depends on (a hand-off to that agent)."""
+
+    @model_validator(mode="after")
+    def _check(self) -> Self:
+        ids = [step.id for step in self.steps]
+        if len(set(ids)) != len(ids):
+            raise ValueError("step ids must be unique")
+        known = set(ids)
+        for step in self.steps:
+            unknown = set(step.depends_on) - known
+            if unknown:
+                raise ValueError(f"step {step.id!r} depends on unknown steps {sorted(unknown)}")
+        done: set[str] = set()
+        while len(done) < len(ids):  # Kahn's algorithm: every step must become ready
+            ready = {s.id for s in self.steps if s.id not in done and set(s.depends_on) <= done}
+            if not ready:
+                raise ValueError("the plan's dependencies form a cycle")
+            done |= ready
+        if self.answer == "last" and len(self.sinks) != 1:
+            raise ValueError('answer="last" needs exactly one step that nothing depends on')
+        return self
+
+    @property
+    def sinks(self) -> list[str]:
+        needed = {d for step in self.steps for d in step.depends_on}
+        return [step.id for step in self.steps if step.id not in needed]
+
+
 class StartRun(_Input):
     input: str = Field(min_length=1, max_length=200_000)
     agent: str | None = None
@@ -256,6 +310,8 @@ class StartRun(_Input):
     tools: tuple[str, ...] = ()
     session: str | None = Field(default=None, pattern=r"^[A-Za-z0-9._-]{1,64}$")
     """Runs in one session share the memory scope session:<principal>/<session>."""
+    plan: Plan | None = None
+    """Run a fixed plan of delegations instead of one agent (operators and admins)."""
 
 
 class RunPhase(StrEnum):
@@ -296,6 +352,14 @@ class RunSummary(_View):
     usage: UsageView = UsageView()
     error: str | None = None
     duration_s: float = 0.0
+    parent_run_id: UUID | None = None
+    """The run that delegated this one, if any."""
+    root_run_id: UUID | None = None
+    depth: int = 0
+    children: int = 0
+    """Runs this run delegated."""
+    objective: str | None = None
+    """The assigned objective of a delegated run."""
 
 
 class Page[T](BaseModel):
@@ -399,6 +463,12 @@ class CancellationView(_View):
     interrupted: tuple[str, ...] = ()
 
 
+class LineageStep(_View):
+    run_id: UUID
+    agent: str | None = None
+    objective: str | None = None
+
+
 class RunDetail(_View):
     summary: RunSummary
     input: str
@@ -417,6 +487,10 @@ class RunDetail(_View):
     failure: FailureView | None
     cancellation: CancellationView | None
     deadline: AwareDatetime | None
+    lineage: tuple[LineageStep, ...] = ()
+    """Ancestors of a delegated run, root first."""
+    assignment: Assignment | None = None
+    delegation: DelegationLimits | None = None
 
 
 class EventView(_View):
@@ -441,6 +515,11 @@ class Approval(_View):
     expires_at: AwareDatetime
     requested_at: AwareDatetime | None = None
     run_input: str
+    root_run_id: UUID | None = None
+    """For a delegated run: the orchestration it belongs to."""
+    depth: int = 0
+    lineage: tuple[str, ...] = ()
+    """Agents from the root to this run (unnamed runs as "run")."""
 
 
 class ApprovalDecisionInput(_Input):
@@ -450,6 +529,89 @@ class ApprovalDecisionInput(_Input):
 
 class CancelInput(_Input):
     reason: str = Field(default="", max_length=2000)
+
+
+# --- orchestration ------------------------------------------------------------------------------
+
+
+class VerificationView(_View):
+    claims: int = 0
+    supported: int = 0
+    weak: int = 0
+    uncited: int = 0
+    fabricated: int = 0
+
+
+class ReportView(_View):
+    """What the delegating run received: Hollis-observed facts plus the child's self-report."""
+
+    outcome: str
+    """completed, failed, cancelled, timed_out, budget_exhausted or refused (Hollis-observed)."""
+    reason: str | None = None
+    status: str | None = None
+    """Self-reported: done, partial, blocked or needs_input."""
+    confidence: str | None = None
+    answer: str | None = None
+    """The child's one-line answer as it reported it (model output, unverified)."""
+    open_questions: tuple[str, ...] = ()
+    verification: VerificationView | None = None
+    side_effects_unknown: tuple[str, ...] = ()
+    evidence: tuple[str, ...] = ()
+
+
+class OrchestrationNode(_View):
+    run: RunSummary
+    parent_invocation_id: str | None = None
+    inputs: tuple[UUID, ...] = ()
+    """Runs whose results were passed to this one (data dependencies)."""
+    started_at: AwareDatetime
+    finished_at: AwareDatetime | None = None
+    report: ReportView | None = None
+    narrowed: tuple[str, ...] = ()
+    """Access the agent is configured with that this run did not get (permissions narrow)."""
+    waiting_on: str | None = None
+    """Why the run is not progressing: an approval, a child, or an interruption."""
+
+
+class RefusalView(_View):
+    parent_run_id: UUID
+    agent: str
+    reason: str
+
+
+class DisagreementView(_View):
+    objective: str
+    runs: tuple[UUID, ...]
+    answers: tuple[str, ...]
+
+
+class OrchestrationTotals(_View):
+    runs: int
+    phases: dict[str, int]
+    input_tokens: int
+    output_tokens: int
+    coordinator_tokens: int
+    """Tokens of runs that delegated (coordination overhead)."""
+    worker_tokens: int
+    wall_s: float
+    agent_s: float
+    """Summed duration of every delegated run (above wall_s means they overlapped)."""
+    max_depth: int
+    waiting_approvals: int
+    failed: int
+
+
+class OrchestrationView(_View):
+    root_run_id: UUID
+    focus_run_id: UUID
+    limits: DelegationLimits | None
+    nodes: tuple[OrchestrationNode, ...]
+    """Pre-order: each run is followed by the runs it delegated."""
+    totals: OrchestrationTotals
+    refusals: tuple[RefusalView, ...] = ()
+    disagreements: tuple[DisagreementView, ...] = ()
+    hidden: int = 0
+    """Runs in the tree the caller cannot see."""
 
 
 # --- artifacts ------------------------------------------------------------------------------------

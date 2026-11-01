@@ -26,6 +26,10 @@ for version control). `hollis init` creates both.
     [[policy.rules]]            # deterministic tool policy (ADR-0015)
     decision = "allow"
     tools = "knowledge_*"
+
+    [orchestration]             # limits on agents delegating to agents (ADR-0031)
+    max_depth = 2
+    token_budget = 200000
 """
 
 import os
@@ -38,6 +42,7 @@ from typing import Any, Literal, cast
 from pydantic import BaseModel, ConfigDict, Field
 
 from hollis.gateway.catalog import Deployment, RoutingPolicy
+from hollis.runtime.delegation import DelegationLimits
 from hollis.runtime.tools import Decision, ToolEffect, ToolTrust
 from hollis.tools.mcp_config import McpServerConfig
 
@@ -92,6 +97,8 @@ class PolicyRuleConfig(_Model):
     effects: tuple[ToolEffect, ...] = ()
     trust: tuple[ToolTrust, ...] = ()
     environments: tuple[str, ...] = ()
+    delegated: bool | None = None
+    """true: only runs another agent delegated; false: only runs nobody delegated."""
     name: str = ""
     reason: str = ""
 
@@ -107,6 +114,11 @@ class KnowledgeConfig(_Model):
     """Directories (relative to the workspace) the API may sync from."""
 
 
+class OrchestrationConfig(DelegationLimits):
+    """Workspace-wide delegation limits (ADR-0031). An agent's own `delegation` limits can only
+    narrow them."""
+
+
 class WorkspaceConfig(_Model):
     workspace: WorkspaceSection = WorkspaceSection()
     server: ServerConfig = ServerConfig()
@@ -118,6 +130,7 @@ class WorkspaceConfig(_Model):
     tools: ToolsConfig = ToolsConfig()
     policy: PolicyConfig = PolicyConfig()
     knowledge: KnowledgeConfig = KnowledgeConfig()
+    orchestration: OrchestrationConfig = OrchestrationConfig()
 
 
 class ConfigError(ValueError):

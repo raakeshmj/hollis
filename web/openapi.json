@@ -41,6 +41,25 @@
             "title": "Created By",
             "type": "string"
           },
+          "delegates": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 16,
+            "title": "Delegates",
+            "type": "array"
+          },
+          "delegation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DelegationLimits"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "description": {
             "default": "",
             "maxLength": 500,
@@ -150,6 +169,25 @@
               "verify_with_provider_at": 0.9
             }
           },
+          "delegates": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 16,
+            "title": "Delegates",
+            "type": "array"
+          },
+          "delegation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DelegationLimits"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "description": {
             "default": "",
             "maxLength": 500,
@@ -233,6 +271,11 @@
             "title": "Binding",
             "type": "string"
           },
+          "depth": {
+            "default": 0,
+            "title": "Depth",
+            "type": "integer"
+          },
           "effect": {
             "title": "Effect",
             "type": "string"
@@ -250,6 +293,14 @@
             "title": "Invocation Id",
             "type": "string"
           },
+          "lineage": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Lineage",
+            "type": "array"
+          },
           "reason": {
             "title": "Reason",
             "type": "string"
@@ -265,6 +316,18 @@
               }
             ],
             "title": "Requested At"
+          },
+          "root_run_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Root Run Id"
           },
           "run_id": {
             "format": "uuid",
@@ -403,6 +466,59 @@
           "truncated"
         ],
         "title": "ArtifactView",
+        "type": "object"
+      },
+      "Assignment": {
+        "additionalProperties": false,
+        "properties": {
+          "agent": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Agent",
+            "type": "string"
+          },
+          "context": {
+            "default": "",
+            "maxLength": 20000,
+            "title": "Context",
+            "type": "string"
+          },
+          "evidence": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Evidence"
+            },
+            "maxItems": 32,
+            "title": "Evidence",
+            "type": "array"
+          },
+          "expected_output": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Expected Output",
+            "type": "string"
+          },
+          "inputs": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/InputRef"
+            },
+            "maxItems": 8,
+            "title": "Inputs",
+            "type": "array"
+          },
+          "objective": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Objective",
+            "type": "string"
+          }
+        },
+        "required": [
+          "agent",
+          "objective"
+        ],
+        "title": "Assignment",
         "type": "object"
       },
       "AttemptView": {
@@ -1045,6 +1161,53 @@
         "title": "CredentialView",
         "type": "object"
       },
+      "DelegationLimits": {
+        "additionalProperties": false,
+        "properties": {
+          "max_children": {
+            "default": 8,
+            "maximum": 64.0,
+            "minimum": 0.0,
+            "title": "Max Children",
+            "type": "integer"
+          },
+          "max_depth": {
+            "default": 2,
+            "maximum": 5.0,
+            "minimum": 0.0,
+            "title": "Max Depth",
+            "type": "integer"
+          },
+          "max_runs": {
+            "default": 24,
+            "maximum": 500.0,
+            "minimum": 1.0,
+            "title": "Max Runs",
+            "type": "integer"
+          },
+          "token_budget": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token Budget"
+          },
+          "wait_s": {
+            "default": 900.0,
+            "exclusiveMinimum": 0.0,
+            "maximum": 3500.0,
+            "title": "Wait S",
+            "type": "number"
+          }
+        },
+        "title": "DelegationLimits",
+        "type": "object"
+      },
       "DeploymentInput": {
         "additionalProperties": false,
         "description": "A gateway catalog entry (same schema as `[[deployments]]` in hollis.toml).",
@@ -1195,6 +1358,34 @@
           "payload"
         ],
         "title": "EventView",
+        "type": "object"
+      },
+      "Evidence": {
+        "additionalProperties": false,
+        "description": "A piece of evidence handed to a child with an earlier result. Built by the application\nfrom the recorded, verified evidence of that result, never from model text, so the child's\ngrounding check can count citations of it.",
+        "properties": {
+          "handle": {
+            "pattern": "^C-[0-9a-f]{8}$",
+            "title": "Handle",
+            "type": "string"
+          },
+          "source": {
+            "default": "",
+            "maxLength": 300,
+            "title": "Source",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 4000,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "handle",
+          "text"
+        ],
+        "title": "Evidence",
         "type": "object"
       },
       "FailureView": {
@@ -1410,6 +1601,33 @@
         "title": "IngestResultView",
         "type": "object"
       },
+      "InputRef": {
+        "additionalProperties": false,
+        "description": "An earlier result passed to a child verbatim (not retyped by the parent).",
+        "properties": {
+          "agent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id"
+        ],
+        "title": "InputRef",
+        "type": "object"
+      },
       "JsonValue": {},
       "KnowledgeAccess": {
         "additionalProperties": false,
@@ -1451,6 +1669,42 @@
           "labels"
         ],
         "title": "LabelsInput",
+        "type": "object"
+      },
+      "LineageStep": {
+        "properties": {
+          "agent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent"
+          },
+          "objective": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Objective"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id"
+        ],
+        "title": "LineageStep",
         "type": "object"
       },
       "LoginInput": {
@@ -1949,6 +2203,84 @@
           "total"
         ],
         "title": "Page[RunSummary]",
+        "type": "object"
+      },
+      "Plan": {
+        "additionalProperties": false,
+        "description": "A fixed delegation plan run by the deterministic `workflow` coordinator (ADR-0030):\nevery wave of ready steps is delegated at once, and a step runs only after the steps it\ndepends on completed. Steps asked the same objective have their answers compared.",
+        "properties": {
+          "answer": {
+            "default": "summary",
+            "enum": [
+              "summary",
+              "last"
+            ],
+            "title": "Answer",
+            "type": "string"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/PlanStep"
+            },
+            "maxItems": 32,
+            "minItems": 1,
+            "title": "Steps",
+            "type": "array"
+          }
+        },
+        "required": [
+          "steps"
+        ],
+        "title": "Plan",
+        "type": "object"
+      },
+      "PlanStep": {
+        "additionalProperties": false,
+        "properties": {
+          "agent": {
+            "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+            "title": "Agent",
+            "type": "string"
+          },
+          "context": {
+            "default": "",
+            "maxLength": 20000,
+            "title": "Context",
+            "type": "string"
+          },
+          "depends_on": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 8,
+            "title": "Depends On",
+            "type": "array"
+          },
+          "expected_output": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Expected Output",
+            "type": "string"
+          },
+          "id": {
+            "pattern": "^[a-z0-9][a-z0-9_-]{0,31}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "objective": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Objective",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "agent",
+          "objective"
+        ],
+        "title": "PlanStep",
         "type": "object"
       },
       "PrincipalInput": {
@@ -2511,6 +2843,16 @@
             ],
             "title": "Answer"
           },
+          "assignment": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Assignment"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "budget": {
             "$ref": "#/components/schemas/RunBudget"
           },
@@ -2545,6 +2887,16 @@
               }
             ],
             "title": "Deadline"
+          },
+          "delegation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DelegationLimits"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "failure": {
             "anyOf": [
@@ -2590,6 +2942,14 @@
                 "type": "null"
               }
             ]
+          },
+          "lineage": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/LineageStep"
+            },
+            "title": "Lineage",
+            "type": "array"
           },
           "memories": {
             "items": {
@@ -2687,6 +3047,11 @@
             "title": "Awaiting Approvals",
             "type": "integer"
           },
+          "children": {
+            "default": 0,
+            "title": "Children",
+            "type": "integer"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -2702,6 +3067,11 @@
               }
             ],
             "title": "Created By"
+          },
+          "depth": {
+            "default": 0,
+            "title": "Depth",
+            "type": "integer"
           },
           "duration_s": {
             "default": 0.0,
@@ -2727,6 +3097,29 @@
             "title": "Model",
             "type": "string"
           },
+          "objective": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Objective"
+          },
+          "parent_run_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Run Id"
+          },
           "phase": {
             "$ref": "#/components/schemas/RunPhase"
           },
@@ -2737,6 +3130,18 @@
           "provider": {
             "title": "Provider",
             "type": "string"
+          },
+          "root_run_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Root Run Id"
           },
           "run_id": {
             "format": "uuid",
@@ -3155,6 +3560,16 @@
               }
             ],
             "title": "Model"
+          },
+          "plan": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Plan"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "session": {
             "anyOf": [

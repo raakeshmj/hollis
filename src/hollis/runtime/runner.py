@@ -671,6 +671,8 @@ class Runner:
         if not state.context_policy.check_grounding:
             return state
         evidence = {p.key: p.text for p in state.passages}
+        if state.assignment is not None:  # handed down with earlier results (ADR-0030)
+            evidence.update({e.handle: e.text for e in state.assignment.evidence})
         for turn in state.turns:
             for invocation in turn.invocations:
                 ref = state.tool(invocation.call.name)

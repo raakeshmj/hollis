@@ -8,7 +8,9 @@ Every method takes the calling `Principal` and enforces authorization here (ADR-
   `Runner.resolve_approval`, so binding and expiry checks are the runtime's (ADR-0015);
 - memory and knowledge views are filtered by the principal's grants;
 - a run's effective memory and knowledge access is the agent's configuration intersected with
-  the caller's grants: running a broadly configured agent never widens what a caller can reach.
+  the caller's grants: running a broadly configured agent never widens what a caller can reach;
+- delegated runs belong to the root run's owner and narrow further at every level (ADR-0031);
+  cancelling a run cancels everything it delegated.
 """
 
 import os
@@ -31,7 +33,13 @@ from hollis.knowledge.model import Chunk, Source
 from hollis.memory import ChangeKind, MemoryCandidate, MemoryRecord, Provenance, SourceKind
 from hollis.platform.auth import Principal
 from hollis.platform.config import WorkspaceConfig
+from hollis.platform.coordinator import WORKFLOW_DEPLOYMENT, plan_input
 from hollis.platform.errors import Conflict, Forbidden, InvalidRequest, NotFound, Unavailable
+from hollis.platform.orchestration import (
+    delegate_tool_name,
+    effective_knowledge,
+    effective_memory,
+)
 from hollis.platform.schemas import (
     Agent,
     AgentInput,
@@ -50,12 +58,15 @@ from hollis.platform.schemas import (
     ForgetInput,
     Health,
     IngestResultView,
+    LineageStep,
     MaintenanceView,
     McpServerView,
     MemoryChangeView,
     MemoryDetail,
     MemoryView,
+    OrchestrationView,
     Page,
+    Plan,
     PrincipalInput,
     PrincipalView,
     ProbeResult,
@@ -85,6 +96,7 @@ from hollis.platform.schemas import (
 from hollis.platform.views import TERMINAL_STATUSES, detail, event_views, run_phase
 from hollis.platform.workspace import LOCAL_EMBEDDER, Workspace
 from hollis.runtime.context import ContextPolicy
+from hollis.runtime.delegation import DelegationLimits
 from hollis.runtime.embedding import EmbeddingRequest, InputType
 from hollis.runtime.knowledge import KnowledgeAccess, KnowledgeQuery, SourceTrust
 from hollis.runtime.memory import Certainty, MemoryAccess, MemoryKind
@@ -350,7 +362,7 @@ class Platform:
             parsed: AnyDeployment = TypeAdapter(Deployment).validate_python(spec.deployment)
         except ValidationError as exc:
             raise InvalidRequest(f"invalid deployment: {_first_error(exc)}") from exc
-        if parsed.id in (DEMO_DEPLOYMENT, LOCAL_EMBEDDER):
+        if parsed.id in (DEMO_DEPLOYMENT, LOCAL_EMBEDDER, WORKFLOW_DEPLOYMENT):
             raise Conflict(f"{parsed.id!r} is a built-in deployment name")
         others = tuple(d for d in self.ws.config.deployments if d.id != parsed.id)
         config = self.ws.config.model_copy(update={"deployments": (*others, parsed)})
@@ -428,7 +440,7 @@ class Platform:
 
     async def tools(self, p: Principal) -> list[ToolView]:
         views: list[ToolView] = []
-        for tool in self.ws.registry:
+        for tool in [*self.ws.registry, *self.ws.delegate_tools.values()]:
             d = tool.descriptor
             verdict = self.ws.policy.decide(
                 PolicyRequest(
@@ -451,7 +463,9 @@ class Platform:
                     isolation=d.isolation.value,
                     timeout_s=d.timeout_s,
                     input_schema=d.input_schema,
-                    source=self.ws.tool_sources.get(d.name, "builtin"),
+                    source=self.ws.tool_sources.get(
+                        d.name, "agents" if d.name in self.ws.delegate_tools else "builtin"
+                    ),
                     policy=verdict.decision.value,
                     policy_rule=verdict.rule,
                     policy_reason=verdict.reason,
@@ -540,6 +554,7 @@ class Platform:
             "INSERT INTO agents (name, data, version) VALUES (?, ?, 1)",
             (agent.name, agent.model_dump_json()),
         )
+        await self.ws.load_agents()
         await self.ws.db.audit(p.name, "agent.create", agent.name)
         return agent
 
@@ -560,13 +575,18 @@ class Platform:
             "UPDATE agents SET data = ?, version = ? WHERE name = ?",
             (agent.model_dump_json(), agent.version, name),
         )
+        await self.ws.load_agents()
         await self.ws.db.audit(p.name, "agent.update", name, f"version {agent.version}")
         return agent
 
     async def delete_agent(self, p: Principal, name: str) -> None:
         _admin(p)
+        users = [a.name for a in self.ws.agents.values() if name in a.delegates and a.name != name]
+        if users:
+            raise Conflict(f"agents delegate to {name!r}: {', '.join(users)}")
         if not await self.ws.db.execute("DELETE FROM agents WHERE name = ?", (name,)):
             raise NotFound(f"no agent {name!r}")
+        await self.ws.load_agents()
         await self.ws.db.audit(p.name, "agent.delete", name)
 
     async def create_starter(self, p: Principal) -> Agent:
@@ -601,11 +621,18 @@ class Platform:
         ]
         if unknown:
             raise InvalidRequest(f"unknown tools: {', '.join(unknown)}")
+        missing = [d for d in spec.delegates if d not in self.ws.agents and d != spec.name]
+        if missing:
+            raise InvalidRequest(f"delegates: no agents named {', '.join(missing)}")
+        if len(set(spec.delegates)) != len(spec.delegates):
+            raise InvalidRequest("delegates: each agent once")
 
     def _check_model(self, model: str) -> None:
         """The model must be a configured text deployment the routing policy allows. Credentials
         are not needed yet: they are read when a run uses the deployment."""
-        if model == DEMO_DEPLOYMENT and self.ws.resolver.demo is not None:
+        if model == WORKFLOW_DEPLOYMENT:
+            raise InvalidRequest("model: the workflow coordinator runs plans, not agents")
+        if self.ws.resolver.builtin(model):
             return
         deployment = self.ws.gateway.catalog.get(model)
         if deployment is None:
@@ -618,21 +645,22 @@ class Platform:
             )
 
     def _mcp_tool(self, name: str) -> bool:
-        return self._mcp_server(name) is not None
-
-    def _mcp_server(self, tool: str) -> str | None:
-        """The configured MCP server a tool name belongs to (tools are named mcp_<server>_*)."""
-        matches = [s for s in self.ws.mcp if tool.startswith(f"mcp_{s}_")]
-        return max(matches, key=len) if matches else None
+        return self.ws.mcp_server(name) is not None
 
     # --- runs -----------------------------------------------------------------------------------
 
     async def start_run(self, p: Principal, spec: StartRun) -> RunSummary:
-        """Agents are the unit of delegation: operators run agents an admin defined; ad-hoc
-        runs (a model, tools and instructions given directly) are for admins."""
+        """Agents are the unit of delegation: operators run agents an admin defined, or plans
+        made of them; ad-hoc runs (a model, tools and instructions given directly) are for
+        admins."""
         _operator(p)
         record_episodes = False
+        delegation: DelegationLimits | None = None
         default = self.ws.config.runtime.default_agent
+        if spec.plan is not None:
+            if spec.agent is not None or spec.model is not None or spec.tools or spec.instructions:
+                raise InvalidRequest("a plan run takes only an input and the plan")
+            return await self._start_plan(p, spec, spec.plan)
         if spec.agent is None and spec.model is None and default is not None:
             spec = spec.model_copy(update={"agent": default})
         if spec.agent is not None:
@@ -645,6 +673,12 @@ class Platform:
             )
             context, memory, knowledge = agent.context, agent.memory, agent.knowledge
             record_episodes = agent.record_episodes
+            if agent.delegates:
+                delegation = self.ws.orchestrator.limits(agent)
+                delegates = self.ws.orchestrator.tool_names(agent, depth=0, limits=delegation)
+                tools = (*tools, *delegates)
+                if not delegates:
+                    delegation = None
         elif spec.model is not None:
             _admin(p)
             model, instructions, tools = spec.model, spec.instructions, spec.tools
@@ -652,7 +686,7 @@ class Platform:
             context, memory, knowledge = ContextPolicy(), None, None
         else:
             raise InvalidRequest("give an agent or a model (no default agent is configured)")
-        memory = _effective_memory(memory, p)
+        memory = effective_memory(memory, p)
         if spec.session is not None:  # a conversation scope private to this principal
             scope = f"session:{p.name}/{spec.session}"
             read = (*(memory.read if memory else ()), scope)
@@ -660,37 +694,94 @@ class Platform:
             memory = MemoryAccess(
                 read=tuple(dict.fromkeys(read)), write=tuple(dict.fromkeys(write))
             )
-        for tool in tools:
-            server = self._mcp_server(tool)
-            if server is not None and self.ws.registry.get(tool) is None:
-                await self.ws.connect_mcp(server)
-        try:
-            state = await self.ws.runner.create(
-                RunSpec(
-                    model=model,
-                    input=spec.input,
-                    instructions=instructions,
-                    budget=budget,
-                    tools=tools,
-                    context=context,
-                    memory=memory,
-                    knowledge=_effective_knowledge(knowledge, p),
-                )
+        run_spec = RunSpec(
+            model=model,
+            input=spec.input,
+            instructions=instructions,
+            budget=budget,
+            tools=tools,
+            context=context,
+            memory=memory,
+            knowledge=effective_knowledge(knowledge, p),
+            delegation=delegation,
+        )
+        state_id = await self._create(p, run_spec, agent=spec.agent, session=spec.session)
+        if record_episodes and memory is not None and memory.write:
+            await self.ws.db.index_patch(state_id, {"episode_scope": memory.write[0]})
+        self.ws.supervisor.schedule(state_id)
+        return await self._summary(state_id)
+
+    async def _start_plan(self, p: Principal, spec: StartRun, plan: Plan) -> RunSummary:
+        """A root run on the deterministic workflow coordinator whose only tools delegate to
+        the plan's agents. Its access is the union of what those agents may use, within the
+        caller's grants, so each step can still narrow to its own agent's configuration."""
+        agents: list[Agent] = []
+        for name in dict.fromkeys(step.agent for step in plan.steps):
+            agents.append(await self.agent(p, name))
+        reads = [s for a in agents if a.memory for s in a.memory.read]
+        writes = [s for a in agents if a.memory for s in a.memory.write]
+        memory = (
+            MemoryAccess(read=tuple(dict.fromkeys(reads)), write=tuple(dict.fromkeys(writes)))
+            if reads
+            else None
+        )
+        collections = [c for a in agents if a.knowledge for c in a.knowledge.collections]
+        labels = [label for a in agents if a.knowledge for label in a.knowledge.labels]
+        knowledge = (
+            KnowledgeAccess(
+                collections=tuple(dict.fromkeys(collections)), labels=tuple(dict.fromkeys(labels))
             )
+            if collections
+            else None
+        )
+        limits = self.ws.orchestrator.limits(None)
+        if limits.max_depth < 1 or limits.max_children < len(plan.steps):
+            raise InvalidRequest(
+                f"the workspace's orchestration limits (max_depth {limits.max_depth}, "
+                f"max_children {limits.max_children}) do not allow this plan"
+            )
+        steps = len(plan.steps)
+        run_spec = RunSpec(
+            model=WORKFLOW_DEPLOYMENT,
+            input=plan_input(spec.input, plan),
+            budget=RunBudget(
+                max_output_tokens=self.ws.config.runtime.max_output_tokens,
+                max_model_turns=steps + 1,
+                max_tool_calls=steps,
+                max_tool_calls_per_turn=min(steps, 100),
+                max_parallel_tools=min(steps, 8),
+                max_tool_output_chars=16_000,
+            ),
+            tools=tuple(dict.fromkeys(delegate_tool_name(a.name) for a in agents)),
+            context=ContextPolicy(
+                memory_limit=0, knowledge_limit=0, artifact_threshold_chars=16_000
+            ),
+            memory=effective_memory(memory, p),
+            knowledge=effective_knowledge(knowledge, p),
+            delegation=limits,
+        )
+        run_id = await self._create(p, run_spec, agent=None, session=spec.session)
+        await self.ws.db.index_patch(run_id, {"plan": True})
+        self.ws.supervisor.schedule(run_id)
+        return await self._summary(run_id)
+
+    async def _create(
+        self, p: Principal, run_spec: RunSpec, *, agent: str | None, session: str | None
+    ) -> UUID:
+        await self.ws.connect_tools(run_spec.tools)
+        try:
+            state = await self.ws.runner.create(run_spec)
         except (UnknownModel, RoutingDenied, WrongTask, CapabilityMismatch, UnknownTool) as exc:
             raise InvalidRequest(str(exc)) from exc
         except SecretInRunInput as exc:
             raise InvalidRequest(str(exc)) from exc
         except MissingCredential as exc:
-            raise Unavailable(f"model {model!r} cannot be used: {exc}") from exc
+            raise Unavailable(f"model {run_spec.model!r} cannot be used: {exc}") from exc
         await self.ws.db.index_set_owner(
-            state.run_id, agent=spec.agent, created_by=p.name, session=spec.session
+            state.run_id, agent=agent, created_by=p.name, session=session
         )
-        if record_episodes and memory is not None and memory.write:
-            await self.ws.db.index_patch(state.run_id, {"episode_scope": memory.write[0]})
-        await self.ws.db.audit(p.name, "run.start", str(state.run_id), spec.agent or model)
-        self.ws.supervisor.schedule(state.run_id)
-        return await self._summary(state.run_id)
+        await self.ws.db.audit(p.name, "run.start", str(state.run_id), agent or run_spec.model)
+        return state.run_id
 
     async def runs(
         self,
@@ -698,9 +789,11 @@ class Platform:
         *,
         phase: RunPhase | None = None,
         agent: str | None = None,
+        roots: bool = False,
         limit: int = 50,
         offset: int = 0,
     ) -> Page[RunSummary]:
+        """Runs the caller can see; `roots` leaves out runs another run delegated."""
         status = None
         if phase is not None and phase in (RunPhase.COMPLETED, RunPhase.FAILED, RunPhase.CANCELLED):
             status = phase.value
@@ -708,6 +801,7 @@ class Platform:
             owner=self._owner_filter(p),
             status=status,
             agent=agent,
+            roots=roots,
             limit=500 if phase else limit,
             offset=0 if phase else offset,
         )
@@ -749,6 +843,11 @@ class Platform:
             usage=UsageView.model_validate(data.get("usage") or {}),
             error=error,
             duration_s=max((row["updated_at"] - row["created_at"]).total_seconds(), 0.0),
+            parent_run_id=row["parent_id"],
+            root_run_id=row["root_id"],
+            depth=row["depth"],
+            children=row["children"],
+            objective=data.get("objective"),
         )
 
     async def _summary(self, run_id: UUID) -> RunSummary:
@@ -776,7 +875,7 @@ class Platform:
     async def run(self, p: Principal, run_id: UUID) -> RunDetail:
         row = await self._require_run(p, run_id)
         events = await self.ws.runs.read(run_id)
-        return detail(
+        view = detail(
             fold(events),
             events,
             active=self.ws.supervisor.active(run_id),
@@ -784,6 +883,40 @@ class Platform:
             created_by=row["created_by"],
             session=row["session"],
             error=row["data"].get("stopped"),
+        )
+        summary = self._row_summary(row)
+        return view.model_copy(
+            update={
+                "summary": summary.model_copy(update={"phase": view.summary.phase}),
+                "lineage": await self._ancestors(p, row),
+            }
+        )
+
+    async def _ancestors(self, p: Principal, row: dict[str, Any]) -> tuple[LineageStep, ...]:
+        steps: list[LineageStep] = []
+        parent = row["parent_id"]
+        while parent is not None and len(steps) < 16:
+            ancestor = await self.ws.db.index_get(parent)
+            if ancestor is None or not self._can_view(p, ancestor):
+                break
+            steps.append(
+                LineageStep(
+                    run_id=parent,
+                    agent=ancestor["agent"],
+                    objective=ancestor["data"].get("objective"),
+                )
+            )
+            parent = ancestor["parent_id"]
+        return tuple(reversed(steps))
+
+    async def run_tree(self, p: Principal, run_id: UUID) -> OrchestrationView:
+        """The orchestration a run belongs to: its root and every run delegated below it that
+        the caller can see."""
+        await self._require_run(p, run_id)
+        return await self.ws.orchestrator.view(
+            run_id,
+            can_view=lambda row: self._can_view(p, dict(row)),
+            summarize=lambda row: self._row_summary(dict(row)),
         )
 
     async def run_summary(self, p: Principal, run_id: UUID) -> RunSummary:
@@ -805,10 +938,18 @@ class Platform:
         return await self._summary(run_id)
 
     async def cancel_run(self, p: Principal, run_id: UUID, spec: CancelInput) -> RunSummary:
+        """Cancel a run and everything it delegated. The run itself stops first, so it cannot
+        react to its children's cancellation by delegating again."""
         row = await self._require_run(p, run_id)
         _owner_or_admin(p, row)
         await self.ws.supervisor.cancel(run_id, by=p.name, reason=spec.reason)
-        await self.ws.db.audit(p.name, "run.cancel", str(run_id), spec.reason)
+        cascaded = 0
+        for child in await self.ws.orchestrator.descendants(run_id):
+            reason = f"run {run_id} that delegated it was cancelled"
+            state = await self.ws.supervisor.cancel(child, by=p.name, reason=reason)
+            cascaded += state.cancellation is not None and state.cancellation.by == p.name
+        detail_text = spec.reason + (f" (and {cascaded} delegated runs)" if cascaded else "")
+        await self.ws.db.audit(p.name, "run.cancel", str(run_id), detail_text)
         return await self._summary(run_id)
 
     async def wait_run(self, p: Principal, run_id: UUID, *, timeout_s: float = 300.0) -> RunSummary:
@@ -875,6 +1016,12 @@ class Platform:
                         expires_at=request.expires_at,
                         requested_at=decided.get(request.invocation_id),
                         run_input=state.input[:500],
+                        root_run_id=row["root_id"],
+                        depth=row["depth"],
+                        lineage=(
+                            *(step.agent or "run" for step in await self._ancestors(p, row)),
+                            row["agent"] or "run",
+                        ),
                     )
                 )
         return result
@@ -1244,26 +1391,6 @@ def _operator(p: Principal) -> None:
 def _owner_or_admin(p: Principal, row: dict[str, Any]) -> None:
     if not (p.is_admin or row["created_by"] == p.name):
         raise Forbidden("only the run's creator or an admin can do that")
-
-
-def _effective_memory(configured: MemoryAccess | None, p: Principal) -> MemoryAccess | None:
-    if configured is None or p.is_admin:
-        return configured
-    grant = p.memory or MemoryAccess()
-    read = tuple(s for s in configured.read if s in grant.read)
-    write = tuple(s for s in configured.write if s in grant.write and s in read)
-    return MemoryAccess(read=read, write=write) if read else None
-
-
-def _effective_knowledge(
-    configured: KnowledgeAccess | None, p: Principal
-) -> KnowledgeAccess | None:
-    if configured is None or p.is_admin:
-        return configured
-    grant = p.knowledge or KnowledgeAccess()
-    collections = tuple(c for c in configured.collections if c in grant.collections)
-    labels = tuple(label for label in configured.labels if label in grant.labels)
-    return KnowledgeAccess(collections=collections, labels=labels) if collections else None
 
 
 def _merge(base: dict[str, Any], changes: dict[str, Any]) -> dict[str, Any]:

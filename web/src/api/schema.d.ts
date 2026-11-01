@@ -874,6 +874,12 @@ export interface components {
             /** Created By */
             created_by: string;
             /**
+             * Delegates
+             * @default []
+             */
+            delegates: string[];
+            delegation?: components["schemas"]["DelegationLimits"] | null;
+            /**
              * Description
              * @default
              */
@@ -930,6 +936,12 @@ export interface components {
              */
             context: components["schemas"]["ContextPolicy"];
             /**
+             * Delegates
+             * @default []
+             */
+            delegates: string[];
+            delegation?: components["schemas"]["DelegationLimits"] | null;
+            /**
              * Description
              * @default
              */
@@ -963,6 +975,11 @@ export interface components {
             arguments: components["schemas"]["JsonValue"];
             /** Binding */
             binding: string;
+            /**
+             * Depth
+             * @default 0
+             */
+            depth: number;
             /** Effect */
             effect: string;
             /**
@@ -974,10 +991,17 @@ export interface components {
             idempotent: boolean;
             /** Invocation Id */
             invocation_id: string;
+            /**
+             * Lineage
+             * @default []
+             */
+            lineage: string[];
             /** Reason */
             reason: string;
             /** Requested At */
             requested_at?: string | null;
+            /** Root Run Id */
+            root_run_id?: string | null;
             /**
              * Run Id
              * Format: uuid
@@ -1032,6 +1056,33 @@ export interface components {
             truncated: boolean;
             /** Trust */
             trust: string;
+        };
+        /** Assignment */
+        Assignment: {
+            /** Agent */
+            agent: string;
+            /**
+             * Context
+             * @default
+             */
+            context: string;
+            /**
+             * Evidence
+             * @default []
+             */
+            evidence: components["schemas"]["Evidence"][];
+            /**
+             * Expected Output
+             * @default
+             */
+            expected_output: string;
+            /**
+             * Inputs
+             * @default []
+             */
+            inputs: components["schemas"]["InputRef"][];
+            /** Objective */
+            objective: string;
         };
         /** AttemptView */
         AttemptView: {
@@ -1320,6 +1371,31 @@ export interface components {
             /** Present */
             present: boolean;
         };
+        /** DelegationLimits */
+        DelegationLimits: {
+            /**
+             * Max Children
+             * @default 8
+             */
+            max_children: number;
+            /**
+             * Max Depth
+             * @default 2
+             */
+            max_depth: number;
+            /**
+             * Max Runs
+             * @default 24
+             */
+            max_runs: number;
+            /** Token Budget */
+            token_budget?: number | null;
+            /**
+             * Wait S
+             * @default 900
+             */
+            wait_s: number;
+        };
         /**
          * DeploymentInput
          * @description A gateway catalog entry (same schema as `[[deployments]]` in hollis.toml).
@@ -1390,6 +1466,23 @@ export interface components {
             summary: string;
             /** Type */
             type: string;
+        };
+        /**
+         * Evidence
+         * @description A piece of evidence handed to a child with an earlier result. Built by the application
+         *     from the recorded, verified evidence of that result, never from model text, so the child's
+         *     grounding check can count citations of it.
+         */
+        Evidence: {
+            /** Handle */
+            handle: string;
+            /**
+             * Source
+             * @default
+             */
+            source: string;
+            /** Text */
+            text: string;
         };
         /** FailureView */
         FailureView: {
@@ -1484,6 +1577,19 @@ export interface components {
             reason: string;
             source?: components["schemas"]["SourceView"] | null;
         };
+        /**
+         * InputRef
+         * @description An earlier result passed to a child verbatim (not retyped by the parent).
+         */
+        InputRef: {
+            /** Agent */
+            agent?: string | null;
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+        };
         JsonValue: unknown;
         /** KnowledgeAccess */
         KnowledgeAccess: {
@@ -1502,6 +1608,18 @@ export interface components {
         LabelsInput: {
             /** Labels */
             labels: string[];
+        };
+        /** LineageStep */
+        LineageStep: {
+            /** Agent */
+            agent?: string | null;
+            /** Objective */
+            objective?: string | null;
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
         };
         /** LoginInput */
         LoginInput: {
@@ -1660,6 +1778,46 @@ export interface components {
             items: components["schemas"]["RunSummary"][];
             /** Total */
             total: number;
+        };
+        /**
+         * Plan
+         * @description A fixed delegation plan run by the deterministic `workflow` coordinator (ADR-0030):
+         *     every wave of ready steps is delegated at once, and a step runs only after the steps it
+         *     depends on completed. Steps asked the same objective have their answers compared.
+         */
+        Plan: {
+            /**
+             * Answer
+             * @default summary
+             * @enum {string}
+             */
+            answer: "summary" | "last";
+            /** Steps */
+            steps: components["schemas"]["PlanStep"][];
+        };
+        /** PlanStep */
+        PlanStep: {
+            /** Agent */
+            agent: string;
+            /**
+             * Context
+             * @default
+             */
+            context: string;
+            /**
+             * Depends On
+             * @default []
+             */
+            depends_on: string[];
+            /**
+             * Expected Output
+             * @default
+             */
+            expected_output: string;
+            /** Id */
+            id: string;
+            /** Objective */
+            objective: string;
         };
         /** PrincipalInput */
         PrincipalInput: {
@@ -1885,6 +2043,7 @@ export interface components {
         RunDetail: {
             /** Answer */
             answer: string | null;
+            assignment?: components["schemas"]["Assignment"] | null;
             budget: components["schemas"]["RunBudget"];
             cancellation: components["schemas"]["CancellationView"] | null;
             /** Compactions */
@@ -1892,6 +2051,7 @@ export interface components {
             context_policy: components["schemas"]["ContextPolicy"];
             /** Deadline */
             deadline: string | null;
+            delegation?: components["schemas"]["DelegationLimits"] | null;
             failure: components["schemas"]["FailureView"] | null;
             grounding: components["schemas"]["GroundingReport"] | null;
             /** Input */
@@ -1899,6 +2059,11 @@ export interface components {
             /** Instructions */
             instructions: string | null;
             knowledge_access: components["schemas"]["KnowledgeAccess"] | null;
+            /**
+             * Lineage
+             * @default []
+             */
+            lineage: components["schemas"]["LineageStep"][];
             /** Memories */
             memories: components["schemas"]["RecalledMemory"][];
             memory_access: components["schemas"]["MemoryAccess"] | null;
@@ -1926,12 +2091,22 @@ export interface components {
              */
             awaiting_approvals: number;
             /**
+             * Children
+             * @default 0
+             */
+            children: number;
+            /**
              * Created At
              * Format: date-time
              */
             created_at: string;
             /** Created By */
             created_by?: string | null;
+            /**
+             * Depth
+             * @default 0
+             */
+            depth: number;
             /**
              * Duration S
              * @default 0
@@ -1943,11 +2118,17 @@ export interface components {
             input_preview: string;
             /** Model */
             model: string;
+            /** Objective */
+            objective?: string | null;
+            /** Parent Run Id */
+            parent_run_id?: string | null;
             phase: components["schemas"]["RunPhase"];
             /** Protocol */
             protocol: string;
             /** Provider */
             provider: string;
+            /** Root Run Id */
+            root_run_id?: string | null;
             /**
              * Run Id
              * Format: uuid
@@ -2114,6 +2295,7 @@ export interface components {
             instructions?: string | null;
             /** Model */
             model?: string | null;
+            plan?: components["schemas"]["Plan"] | null;
             /** Session */
             session?: string | null;
             /**

@@ -2,8 +2,8 @@
 
 `Workspace.open(root)` opens the stores in `.hollis/` and builds, from `hollis.toml`:
 - the model gateway (plus the built-in demo model) and the knowledge embedder;
-- the tool catalog: filesystem tools (if configured), artifact, knowledge and memory tools, and
-  MCP servers (connected on demand);
+- the tool catalog: filesystem tools (if configured), artifact, knowledge and memory tools, MCP
+  servers (connected on demand), and one `delegate_<agent>` tool per agent (ADR-0030);
 - the tool policy (configured rules, falling back to the fail-safe default);
 - one `Runner` with deferred approvals (runs wait for a decision instead of being denied) and
   observers that keep the run index current and wake live streams;
@@ -35,7 +35,10 @@ from hollis.knowledge.tools import knowledge_tools
 from hollis.memory import MemoryManager, memory_tools, record_episode
 from hollis.platform.auth import Auth
 from hollis.platform.config import DATA_DIR, WorkspaceConfig, load_config, save_config
+from hollis.platform.coordinator import WORKFLOW_DEPLOYMENT, WorkflowCoordinator
 from hollis.platform.db import WorkspaceDb
+from hollis.platform.orchestration import DelegateTool, Orchestrator, delegation_effect
+from hollis.platform.schemas import Agent
 from hollis.platform.supervisor import EventBus, RunSupervisor
 from hollis.runtime.embedding import EmbeddingProvider
 from hollis.runtime.events import EventEnvelope
@@ -43,7 +46,7 @@ from hollis.runtime.model import ModelProvider
 from hollis.runtime.runner import Runner
 from hollis.runtime.state import RunState, fold
 from hollis.runtime.store import load_run
-from hollis.runtime.tools import Tool
+from hollis.runtime.tools import Tool, ToolEffect
 from hollis.tools import CallbackApprover, Rule, RulePolicy, ToolRegistry
 from hollis.tools.builtin import artifact_tools, filesystem_tools
 from hollis.tools.mcp_config import McpServerConfig
@@ -54,15 +57,25 @@ LOCAL_EMBEDDER = "local-hashing"
 
 
 class PlatformResolver:
-    """The gateway, plus the built-in demo deployment when enabled."""
+    """The gateway, plus the built-in demo deployment when enabled and the deterministic
+    workflow coordinator. `register` adds providers for embedded use and tests."""
 
     def __init__(self, gateway: ModelGateway, *, demo: bool) -> None:
         self._gateway = gateway
         self._demo = DemoModelProvider() if demo else None
+        self._builtin: dict[str, ModelProvider] = {WORKFLOW_DEPLOYMENT: WorkflowCoordinator()}
+
+    def register(self, provider: ModelProvider) -> None:
+        self._builtin[provider.descriptor.deployment] = provider
+
+    def builtin(self, model: str) -> bool:
+        return model in self._builtin or (self._demo is not None and model == DEMO_DEPLOYMENT)
 
     def resolve(self, model: str) -> ModelProvider:
         if self._demo is not None and model == DEMO_DEPLOYMENT:
             return self._demo
+        if model in self._builtin:
+            return self._builtin[model]
         return self._gateway.resolve(model)
 
     @property
@@ -77,6 +90,16 @@ class McpConnection:
         self.status = "not_connected"
         self.error: str | None = None
         self.connected_at: datetime | None = None
+
+
+class WorkspaceTools:
+    """The runner's tool catalog: registered tools, then delegate tools."""
+
+    def __init__(self, workspace: "Workspace") -> None:
+        self._ws = workspace
+
+    def get(self, name: str) -> Tool | None:
+        return self._ws.registry.get(name) or self._ws.delegate_tools.get(name)
 
 
 class Workspace:
@@ -102,6 +125,11 @@ class Workspace:
         self.bus = EventBus()
         self.mcp: dict[str, McpConnection] = {}
         self._mcp_lock = asyncio.Lock()
+        self.agents: dict[str, Agent] = {}
+        self.delegate_tools: dict[str, DelegateTool] = {}
+        self.orchestrator = Orchestrator(self)
+        self.tools = WorkspaceTools(self)
+        self._providers: list[ModelProvider] = []
         self._build()
         self.supervisor = RunSupervisor(
             lambda: self.runner, self.bus, on_error=self._record_error, prepare=self._prepare_run
@@ -121,6 +149,7 @@ class Workspace:
             knowledge_store=await SqliteKnowledgeStore.open(data / "knowledge.db"),
         )
         await workspace.auth.ensure_admin()
+        await workspace.load_agents()
         return workspace
 
     # --- composition ----------------------------------------------------------------------------
@@ -130,6 +159,8 @@ class Workspace:
         self.gateway = ModelGateway(Catalog(deployments=config.deployments, routing=config.routing))
         self.redactor = self.gateway.redactor
         self.resolver = PlatformResolver(self.gateway, demo=config.demo)
+        for provider in self._providers:
+            self.resolver.register(provider)
         self.embedder = self._embedder()
         self.memory = MemoryManager(self.memory_store, redactor=self.redactor)
         self.knowledge = KnowledgeBase(
@@ -164,16 +195,18 @@ class Workspace:
                 effects=frozenset(r.effects) or None,
                 trust=frozenset(r.trust) or None,
                 environments=frozenset(r.environments) or None,
+                delegated=r.delegated,
                 name=r.name,
                 reason=r.reason,
             )
             for r in config.policy.rules
         ]
         self.policy = RulePolicy.of(*rules)
+        self.refresh_delegations()
         self.runner = Runner(
             self.runs,
             self.resolver,
-            tools=self.registry,
+            tools=self.tools,
             policy=self.policy,
             approver=CallbackApprover(lambda request: None),  # decisions come from people
             environment=config.runtime.environment,
@@ -182,7 +215,44 @@ class Workspace:
             memory=self.memory,
             knowledge=self.retriever,
             observers=(self._observe, self.bus.publish),
+            guard=self.orchestrator,
         )
+
+    def register_provider(self, provider: ModelProvider) -> None:
+        """Serve a deployment from an in-process provider (embedded use, tests, evaluations)."""
+        self._providers.append(provider)
+        self.resolver.register(provider)
+
+    async def load_agents(self) -> None:
+        rows = await self.db.query("SELECT data FROM agents ORDER BY name")
+        self.agents = {a.name: a for a in (Agent.model_validate_json(r[0]) for r in rows)}
+        self.refresh_delegations()
+
+    def refresh_delegations(self) -> None:
+        """One delegate tool per agent; its effect is the strongest its delegation can cause."""
+        self.delegate_tools = {}
+        for agent in self.agents.values():
+            effect = delegation_effect(agent.name, self.agents, self._tool_effect)
+            tool = DelegateTool(self.orchestrator, agent, effect)
+            self.delegate_tools[tool.descriptor.name] = tool
+
+    def _tool_effect(self, name: str) -> ToolEffect | None:
+        if name.startswith("mcp_"):
+            return None  # external and connected on demand: treated as mutating
+        tool = self.registry.get(name)
+        return tool.descriptor.effect if tool is not None else None
+
+    async def connect_tools(self, tools: tuple[str, ...]) -> None:
+        """Connect the MCP servers whose tools a run is about to use."""
+        for tool in tools:
+            server = self.mcp_server(tool)
+            if server is not None and self.registry.get(tool) is None:
+                await self.connect_mcp(server)
+
+    def mcp_server(self, tool: str) -> str | None:
+        """The configured MCP server a tool name belongs to (tools are named mcp_<server>_*)."""
+        matches = [s for s in self.mcp if tool.startswith(f"mcp_{s}_")]
+        return max(matches, key=len) if matches else None
 
     def _embedder(self) -> EmbeddingProvider:
         name = self.config.knowledge.embedder
@@ -250,6 +320,7 @@ class Workspace:
         connection.server, connection.status, connection.error = server, "connected", None
         connection.connected_at = datetime.now(UTC)
         self._add_tools(f"mcp:{name}", list(server.tools.values()))
+        self.refresh_delegations()
         return connection
 
     async def _prepare_run(self, run_id: UUID) -> None:
@@ -283,6 +354,7 @@ class Workspace:
 
     async def _index(self, event: EventEnvelope, state: RunState) -> None:
         failure = state.failure.message if state.failure else None
+        lineage = state.lineage
         await self.db.index_upsert(
             state.run_id,
             status=state.status.value,
@@ -303,7 +375,14 @@ class Workspace:
                 },
                 "error": failure,
                 "stopped": None,  # any progress clears a previous execution error
+                "objective": " ".join(state.assignment.objective.split())[:300]
+                if state.assignment
+                else None,
+                "token_budget": state.delegation.token_budget if state.delegation else None,
             },
+            parent_id=lineage.parent_run_id if lineage else None,
+            root_id=lineage.root_run_id if lineage else None,
+            depth=state.depth,
         )
 
     async def _record_error(self, run_id: UUID, message: str) -> None:

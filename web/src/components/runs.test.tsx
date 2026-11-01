@@ -19,6 +19,9 @@ const approval: Approval = {
   expires_at: "2099-01-01T00:00:00Z",
   requested_at: null,
   run_input: "write notes.txt: hello",
+  root_run_id: null,
+  depth: 0,
+  lineage: ["helper"],
 };
 
 const summary = { run_id: approval.run_id, phase: "running" };

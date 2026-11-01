@@ -55,6 +55,19 @@ MIGRATIONS = (
         """CREATE TRIGGER audit_no_delete BEFORE DELETE ON audit
            BEGIN SELECT RAISE(ABORT, 'the audit log is append-only'); END""",
     ),
+    (  # M7: run lineage, derived from RunCreated like the other index columns
+        "ALTER TABLE run_index ADD COLUMN parent_id TEXT",
+        "ALTER TABLE run_index ADD COLUMN root_id TEXT",
+        "ALTER TABLE run_index ADD COLUMN depth INTEGER NOT NULL DEFAULT 0",
+        "CREATE INDEX run_index_parent ON run_index (parent_id)",
+        "CREATE INDEX run_index_root ON run_index (root_id, created_at)",
+    ),
+)
+
+_COLUMNS = (
+    "run_id, agent, created_by, session, status, created_at, updated_at, version, awaiting, data, "
+    "parent_id, root_id, depth, "
+    "(SELECT COUNT(*) FROM run_index AS c WHERE c.parent_id = run_index.run_id) AS children"
 )
 
 
@@ -122,14 +135,20 @@ class WorkspaceDb:
         version: int,
         awaiting: int,
         data: dict[str, Any],
+        parent_id: UUID | None = None,
+        root_id: UUID | None = None,
+        depth: int = 0,
     ) -> None:
         await self.execute(
             """INSERT INTO run_index
-                   (run_id, status, created_at, updated_at, version, awaiting, data)
-               VALUES (?, ?, ?, ?, ?, ?, ?)
+                   (run_id, status, created_at, updated_at, version, awaiting, data,
+                    parent_id, root_id, depth)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT (run_id) DO UPDATE SET status = excluded.status,
                    updated_at = excluded.updated_at, version = excluded.version,
-                   awaiting = excluded.awaiting, data = json_patch(run_index.data, excluded.data)
+                   awaiting = excluded.awaiting, data = json_patch(run_index.data, excluded.data),
+                   parent_id = excluded.parent_id, root_id = excluded.root_id,
+                   depth = excluded.depth
                WHERE excluded.version >= run_index.version""",
             (
                 str(run_id),
@@ -139,6 +158,9 @@ class WorkspaceDb:
                 version,
                 awaiting,
                 json.dumps(data),
+                str(parent_id) if parent_id else None,
+                str(root_id) if root_id else None,
+                depth,
             ),
         )
 
@@ -161,12 +183,25 @@ class WorkspaceDb:
         return {UUID(run_id): version for run_id, version in rows}
 
     async def index_get(self, run_id: UUID) -> dict[str, Any] | None:
-        rows = await self.query(
-            "SELECT run_id, agent, created_by, session, status, created_at, updated_at, version, "
-            "awaiting, data FROM run_index WHERE run_id = ?",
-            (str(run_id),),
-        )
+        sql = f"SELECT {_COLUMNS} FROM run_index WHERE run_id = ?"  # noqa: S608  # fixed fragments
+        rows = await self.query(sql, (str(run_id),))
         return _row(rows[0]) if rows else None
+
+    async def index_tree(self, root_id: UUID) -> list[dict[str, Any]]:
+        """A root run and every run delegated below it, oldest first."""
+        rows = await self.query(
+            f"SELECT {_COLUMNS} FROM run_index WHERE run_id = ? OR root_id = ? "  # noqa: S608  # fixed fragments
+            "ORDER BY created_at, run_id",
+            (str(root_id), str(root_id)),
+        )
+        return [_row(r) for r in rows]
+
+    async def index_children(self, parent_id: UUID) -> list[dict[str, Any]]:
+        rows = await self.query(
+            f"SELECT {_COLUMNS} FROM run_index WHERE parent_id = ? ORDER BY created_at, run_id",  # noqa: S608  # fixed fragments
+            (str(parent_id),),
+        )
+        return [_row(r) for r in rows]
 
     async def index_list(
         self,
@@ -174,11 +209,14 @@ class WorkspaceDb:
         owner: str | None,
         status: str | None = None,
         agent: str | None = None,
+        roots: bool = False,
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[list[dict[str, Any]], int]:
         where: list[str] = []
         params: list[Any] = []
+        if roots:
+            where.append("parent_id IS NULL")
         if owner is not None:
             where.append("created_by = ?")
             params.append(owner)
@@ -193,16 +231,21 @@ class WorkspaceDb:
         count_sql = f"SELECT COUNT(*) FROM run_index {clause}"  # noqa: S608  # fixed fragments
         total = (await self.query(count_sql, params))[0][0]
         list_sql = (
-            "SELECT run_id, agent, created_by, session, status, created_at, updated_at, version, "  # noqa: S608  # fixed fragments
-            f"awaiting, data FROM run_index {clause} ORDER BY created_at DESC LIMIT ? OFFSET ?"
+            f"SELECT {_COLUMNS} FROM run_index {clause} "  # noqa: S608  # fixed fragments
+            "ORDER BY created_at DESC LIMIT ? OFFSET ?"
         )
         rows = await self.query(list_sql, [*params, limit, offset])
         return [_row(r) for r in rows], int(total)
 
 
 def _row(row: tuple[Any, ...]) -> dict[str, Any]:
-    run_id, agent, created_by, session, status, created, updated, version, awaiting, data = row
+    run_id, agent, created_by, session, status, created, updated, version, awaiting, data = row[:10]
+    parent_id, root_id, depth, children = row[10:]
     return {
+        "parent_id": UUID(parent_id) if parent_id else None,
+        "root_id": UUID(root_id) if root_id else None,
+        "depth": depth,
+        "children": children,
         "run_id": UUID(run_id),
         "agent": agent,
         "created_by": created_by,
