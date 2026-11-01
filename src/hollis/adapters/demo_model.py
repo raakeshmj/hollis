@@ -277,23 +277,26 @@ def _team_summary(request: ModelRequest) -> str:
             outcome = meta.get("outcome")
             bodies = [b for _, _, b in extract_reports(result.content)]
             text = restore_citations(" ".join(bodies), set(tool_evidence(result.content)))
-            text = _clip(text.removeprefix("[demo]").strip(), 300) if text else meta.get("reason")
+            text = _clip(_findings(text), 300) if text else meta.get("reason")
             lines.append(f"- {meta.get('agent')} ({outcome}): {text}")
     return "\n".join(lines)
 
 
 def _review(task: str, reports: list[tuple[str, str, str]]) -> str:
+    """The reports side by side, citations kept. Rules cannot judge whether they agree."""
     handles = set(tool_evidence(task))
     agents = ", ".join(agent for agent, _, _ in reports)
     lines = [f"[demo] Reviewed {len(reports)} reports ({agents}):"]
     for agent, _, body in reports:
-        text = restore_citations(body.removeprefix("[demo]").strip(), handles)
-        lines.append(f"- {agent}: {_clip(text, 240)}")
-    firsts = {_first_sentence(b.removeprefix("[demo]")).casefold() for _, _, b in reports}
-    lines.append(
-        "They agree." if len(firsts) == 1 else "They differ; check the evidence for each claim."
-    )
+        lines.append(f"- {agent}: {_clip(_findings(restore_citations(body, handles)), 240)}")
     return "\n".join(lines)
+
+
+def _findings(body: str) -> str:
+    """A demo answer's findings, without its "[demo] From the ...:" header."""
+    lines = [line.strip() for line in body.removeprefix("[demo]").splitlines()]
+    kept = [line.removeprefix("- ") for line in lines if line and not line.endswith(":")]
+    return " ".join(kept) or body.strip()
 
 
 def _with_self_report(text: str) -> str:
