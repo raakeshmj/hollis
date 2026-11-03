@@ -32,6 +32,18 @@
               "verify_with_provider_at": 0.9
             }
           },
+          "contract": {
+            "anyOf": [
+              {
+                "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contract"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -102,10 +114,38 @@
             "title": "Name",
             "type": "string"
           },
+          "origin": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentOrigin"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "policy": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/PolicyOverlayRule"
+            },
+            "maxItems": 32,
+            "title": "Policy",
+            "type": "array"
+          },
           "record_episodes": {
             "default": false,
             "title": "Record Episodes",
             "type": "boolean"
+          },
+          "skills": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Skills",
+            "type": "array"
           },
           "tools": {
             "default": [],
@@ -169,6 +209,18 @@
               "verify_with_provider_at": 0.9
             }
           },
+          "contract": {
+            "anyOf": [
+              {
+                "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contract"
+          },
           "delegates": {
             "default": [],
             "items": {
@@ -230,10 +282,28 @@
             "title": "Name",
             "type": "string"
           },
+          "policy": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/PolicyOverlayRule"
+            },
+            "maxItems": 32,
+            "title": "Policy",
+            "type": "array"
+          },
           "record_episodes": {
             "default": false,
             "title": "Record Episodes",
             "type": "boolean"
+          },
+          "skills": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Skills",
+            "type": "array"
           },
           "tools": {
             "default": [],
@@ -249,6 +319,46 @@
           "model"
         ],
         "title": "AgentInput",
+        "type": "object"
+      },
+      "AgentOrigin": {
+        "description": "The template an agent was made from (ADR-0033).",
+        "properties": {
+          "digest": {
+            "title": "Digest",
+            "type": "string"
+          },
+          "overrides": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Overrides",
+            "type": "array"
+          },
+          "parameters": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": {},
+            "title": "Parameters",
+            "type": "object"
+          },
+          "template": {
+            "title": "Template",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "template",
+          "version",
+          "digest"
+        ],
+        "title": "AgentOrigin",
         "type": "object"
       },
       "Approval": {
@@ -2495,6 +2605,68 @@
         "title": "OrchestrationView",
         "type": "object"
       },
+      "OutputView": {
+        "description": "A run's structured output under its agent's contract (ADR-0034).",
+        "properties": {
+          "attempts": {
+            "title": "Attempts",
+            "type": "integer"
+          },
+          "contract": {
+            "title": "Contract",
+            "type": "string"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
+          },
+          "invocation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invocation Id"
+          },
+          "problems": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Problems",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "accepted",
+              "rejected",
+              "missing"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "contract",
+          "status",
+          "attempts"
+        ],
+        "title": "OutputView",
+        "type": "object"
+      },
       "Page_RunSummary_": {
         "properties": {
           "items": {
@@ -2592,6 +2764,62 @@
           "objective"
         ],
         "title": "PlanStep",
+        "type": "object"
+      },
+      "PolicyOverlayRule": {
+        "additionalProperties": false,
+        "description": "A per-run rule recorded with the run that can only make a policy decision stricter\n(ADR-0035): an agent can be held to less than the workspace allows, never more.\n\nIt matches a tool call by tool name (glob) and declared effect, and optionally by\narguments: `outside` maps an argument name to allowed path globs, and the rule matches when\nany value of that argument (a string or a list of strings) is outside all of them, or tries\nto leave the root with `..`. Paths are compared relative, as the tools receive them.",
+        "properties": {
+          "decision": {
+            "enum": [
+              "require_approval",
+              "deny"
+            ],
+            "title": "Decision",
+            "type": "string"
+          },
+          "effects": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ToolEffect"
+            },
+            "title": "Effects",
+            "type": "array"
+          },
+          "name": {
+            "default": "",
+            "maxLength": 80,
+            "title": "Name",
+            "type": "string"
+          },
+          "outside": {
+            "additionalProperties": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "title": "Outside",
+            "type": "object"
+          },
+          "reason": {
+            "default": "",
+            "maxLength": 300,
+            "title": "Reason",
+            "type": "string"
+          },
+          "tools": {
+            "default": "*",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Tools",
+            "type": "string"
+          }
+        },
+        "required": [
+          "decision"
+        ],
+        "title": "PolicyOverlayRule",
         "type": "object"
       },
       "PrincipalInput": {
@@ -2976,6 +3204,16 @@
           "outcome": {
             "title": "Outcome",
             "type": "string"
+          },
+          "output": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OutputView"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "reason": {
             "anyOf": [
@@ -3395,11 +3633,29 @@
               }
             ]
           },
+          "output": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OutputView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "passages": {
             "items": {
               "$ref": "#/components/schemas/RetrievedPassage"
             },
             "title": "Passages",
+            "type": "array"
+          },
+          "policy": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/PolicyOverlayRule"
+            },
+            "title": "Policy",
             "type": "array"
           },
           "summary": {
@@ -4590,6 +4846,16 @@
         ],
         "title": "ToolCallView",
         "type": "object"
+      },
+      "ToolEffect": {
+        "description": "Declared by the registering code (trusted), never by a tool description or a server.",
+        "enum": [
+          "read_only",
+          "mutating",
+          "destructive"
+        ],
+        "title": "ToolEffect",
+        "type": "string"
       },
       "ToolView": {
         "properties": {

@@ -25,7 +25,8 @@ from hollis.runtime.tools import PolicyOverlayRule
 ID_PATTERN = r"^[a-z0-9][a-z0-9-]{0,62}$"
 VERSION_PATTERN = r"^\d{1,4}\.\d{1,4}\.\d{1,4}$"
 PARAMETER_PATTERN = r"^[a-z][a-z0-9_]{0,30}$"
-_PLACEHOLDER = re.compile(r"\{([a-z][a-z0-9_]{0,30})\}")
+_TOKEN = re.compile(r"\{\{|\}\}|\{([a-z][a-z0-9_]{0,30})\}")
+"""`{name}` is a parameter; `{{` and `}}` are literal braces."""
 
 
 class Frozen(BaseModel):
@@ -132,7 +133,8 @@ class Template(Frozen):
     tools: tuple[str, ...] = Field(default=(), max_length=32)
     """Further required tools, besides the capabilities'."""
     instructions: str = Field(min_length=1, max_length=20_000)
-    """The procedure. `{name}` is replaced with a parameter's value."""
+    """The procedure. `{name}` is replaced with a parameter's value; `{{` and `}}` are
+    literal braces."""
     contract: str | None = Field(default=None, pattern=ID_PATTERN)
     """The output contract runs of the agent submit their result under."""
     policy: tuple[PolicyOverlayRule, ...] = Field(default=(), max_length=16)
@@ -149,11 +151,11 @@ class Template(Frozen):
         names = [p.name for p in self.parameters]
         if len(set(names)) != len(names):
             raise ValueError("parameter names must be unique")
-        used = set(_PLACEHOLDER.findall(self.instructions))
+        used = placeholders(self.instructions)
         for rule in self.policy:
-            used |= set(_PLACEHOLDER.findall(rule.reason))
+            used |= placeholders(rule.reason)
             for globs in rule.outside.values():
-                used |= {n for g in globs for n in _PLACEHOLDER.findall(g)}
+                used |= {n for g in globs for n in placeholders(g)}
         undeclared = used - set(names)
         if undeclared:
             raise ValueError(f"placeholders without a parameter: {sorted(undeclared)}")
@@ -182,6 +184,22 @@ def load_toml[T: BaseModel](path: Path, model: type[T]) -> T:
         raise ValueError(f"{path.name}: {exc}") from exc
 
 
+def placeholders(text: str) -> set[str]:
+    return {m.group(1) for m in _TOKEN.finditer(text) if m.group(1)}
+
+
 def fill(text: str, values: dict[str, str]) -> str:
-    """Replace `{name}` placeholders with parameter values; other braces stay as they are."""
-    return _PLACEHOLDER.sub(lambda m: values.get(m.group(1), m.group(0)), text)
+    """Replace `{name}` placeholders with parameter values and `{{`, `}}` with braces; other
+    braces stay as they are."""
+
+    def replace(match: re.Match[str]) -> str:
+        if match.group(1) is None:
+            return match.group(0)[0]
+        return values.get(match.group(1), match.group(0))
+
+    return _TOKEN.sub(replace, text)
+
+
+def escape(text: str) -> str:
+    """Text that `fill` turns back into itself."""
+    return text.replace("{", "{{").replace("}", "}}")

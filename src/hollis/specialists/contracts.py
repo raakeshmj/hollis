@@ -49,6 +49,8 @@ class Call:
 
     order: int
     invocation_id: str
+    call_id: str
+    """The id the model gave the call (what the model can refer to)."""
     name: str
     arguments: dict[str, JsonValue]
     outcome: ToolOutcome
@@ -64,13 +66,16 @@ class RunFacts:
     evidence: dict[str, str]
     root: Path | None
     """The filesystem root of the workspace's file tools, if any."""
-    children: dict[str, str] = field(default_factory=dict[str, str])
-    """Delegated run id -> Hollis-observed outcome, from delegation reports."""
+    children: dict[str, tuple[str, str | None]] = field(
+        default_factory=dict[str, tuple[str, str | None]]
+    )
+    """Delegated run id -> (Hollis-observed outcome, the child's output status or None when it
+    has no contract), from delegation reports."""
 
     @classmethod
     def of(cls, state: RunState, root: Path | None) -> "RunFacts":
         calls: list[Call] = []
-        children: dict[str, str] = {}
+        children: dict[str, tuple[str, str | None]] = {}
         for turn in state.turns:
             for invocation in turn.invocations:
                 if invocation.outcome is None:
@@ -80,12 +85,15 @@ class RunFacts:
                 for item in data:
                     if isinstance(item, dict) and item.get("kind") == REPORT_KIND:
                         run_id, outcome = item.get("run_id"), item.get("outcome")
+                        output = item.get("output")
+                        status = output.get("status") if isinstance(output, dict) else None
                         if isinstance(run_id, str) and isinstance(outcome, str):
-                            children[run_id] = outcome
+                            children[run_id] = (outcome, str(status) if status else None)
                 calls.append(
                     Call(
                         order=len(calls),
                         invocation_id=invocation.invocation_id,
+                        call_id=invocation.call.call_id,
                         name=invocation.call.name,
                         arguments=invocation.arguments or {},
                         outcome=invocation.outcome,
@@ -96,8 +104,9 @@ class RunFacts:
                 )
         return cls(calls=tuple(calls), evidence=state.evidence(), root=root, children=children)
 
-    def call(self, invocation_id: str) -> Call | None:
-        return next((c for c in self.calls if c.invocation_id == invocation_id), None)
+    def call(self, call_id: str) -> Call | None:
+        """The latest call the model gave this id (ids are unique per provider response)."""
+        return next((c for c in reversed(self.calls) if c.call_id == call_id), None)
 
     def changes(self) -> dict[str, int]:
         """File -> order of the last successful call that changed it."""
@@ -137,7 +146,8 @@ class _Output(BaseModel):
 Text = Annotated[str, Field(min_length=1, max_length=2000)]
 Short = Annotated[str, Field(min_length=1, max_length=300)]
 FilePath = Annotated[str, Field(min_length=1, max_length=500)]
-InvocationId = Annotated[str, Field(min_length=1, max_length=200)]
+CallId = Annotated[str, Field(min_length=1, max_length=200)]
+"""The id of one of the run's tool calls, as the model gave it."""
 
 
 @dataclass(frozen=True)
@@ -175,7 +185,7 @@ class Change(_Output):
 
 
 class Verification(_Output):
-    invocation_id: InvocationId
+    call_id: CallId
     """The tool call that ran the check."""
     command: Short
     """Its tool name."""
@@ -201,30 +211,23 @@ def _check_change_report(output: _Output, facts: RunFacts) -> list[str]:
             )
     last_change = max(changed.values(), default=-1)
     for verification in output.verifications:
-        call = facts.call(verification.invocation_id)
+        ref = verification.call_id
+        call = facts.call(ref)
         if call is None:
-            problems.append(f"verification {verification.invocation_id}: no such tool call")
+            problems.append(f"verification {ref}: no such tool call")
             continue
         if call.name != verification.command:
-            problems.append(
-                f"verification {verification.invocation_id} ran {call.name}, "
-                f"not {verification.command}"
-            )
+            problems.append(f"verification {ref} ran {call.name}, not {verification.command}")
         recorded = {ToolOutcome.SUCCESS: "passed", ToolOutcome.ERROR: "failed"}.get(call.outcome)
         if recorded is None:
-            problems.append(
-                f"verification {verification.invocation_id} did not run to an outcome "
-                f"({call.outcome.value})"
-            )
+            problems.append(f"verification {ref} did not run to an outcome ({call.outcome.value})")
         elif recorded != verification.outcome:
             problems.append(
-                f"verification {verification.invocation_id} {recorded}; "
-                f"it is reported as {verification.outcome}"
+                f"verification {ref} {recorded}; it is reported as {verification.outcome}"
             )
         if verification.outcome == "passed" and call.order < last_change:
             problems.append(
-                f"verification {verification.invocation_id} ran before the last change; "
-                "run it again to verify the change"
+                f"verification {ref} ran before the last change; run it again to verify the change"
             )
     return problems
 
@@ -237,7 +240,7 @@ CHANGE_REPORT = Contract(
     schema=ChangeReport,
     rules=(
         "every listed file was changed by a successful patch or write in this run",
-        "every verification names a tool call of this run (invocation id and tool name) and "
+        "every verification names a tool call of this run (its call id and tool name) and "
         "its recorded outcome: passed if it succeeded, failed if it reported an error",
         "a passing verification ran after the last change",
     ),
@@ -407,13 +410,16 @@ def _check_research_brief(output: _Output, facts: RunFacts) -> list[str]:
         for citation in citations:
             if citation in facts.evidence:
                 continue
-            outcome = facts.children.get(citation)
-            if outcome == "completed":
-                continue
-            if outcome is not None:
-                problems.append(f"{label}: delegated run {citation} did not complete ({outcome})")
-            else:
+            child = facts.children.get(citation)
+            if child is None:
                 problems.append(f"{label}: {citation} is not evidence this run received")
+            elif child[0] != "completed":
+                problems.append(f"{label}: delegated run {citation} did not complete ({child[0]})")
+            elif child[1] not in (None, "accepted"):
+                problems.append(
+                    f"{label}: delegated run {citation} has no accepted output ({child[1]}); "
+                    "its answer is unchecked"
+                )
     for i, claim in enumerate(output.findings, start=1):
         if CITATION.search(claim.statement) and not claim.citations:
             problems.append(f"finding {i}: put citations in `citations`, not in the text")
@@ -428,7 +434,8 @@ RESEARCH_BRIEF = Contract(
     schema=ResearchBrief,
     rules=(
         "every citation is a passage handle this run received (from knowledge tools, its context "
-        "or its assignment) or the id of a run it delegated that completed",
+        "or its assignment) or the id of a run it delegated that completed, with its output "
+        "accepted if it had a contract",
         "contradictions cite at least two sources",
     ),
     check=_check_research_brief,
@@ -579,7 +586,7 @@ DOCS_CHANGE = Contract(
 
 class Step(_Output):
     description: Text
-    invocation_id: InvocationId
+    call_id: CallId
     outcome: Literal["succeeded", "failed", "not_run", "unknown"]
     notes: str = Field(default="", max_length=1000)
 
@@ -588,8 +595,8 @@ class AutomationLog(_Output):
     summary: Text
     plan: tuple[Short, ...] = Field(min_length=1, max_length=50)
     steps: tuple[Step, ...] = Field(default=(), max_length=100)
-    unknown_side_effects: tuple[InvocationId, ...] = Field(default=(), max_length=50)
-    """Invocations whose effect is unknown: check the system before retrying."""
+    unknown_side_effects: tuple[CallId, ...] = Field(default=(), max_length=50)
+    """Calls whose effect is unknown: check the system before retrying."""
 
 
 _STEP_OUTCOME = {
@@ -606,15 +613,13 @@ def _check_automation_log(output: _Output, facts: RunFacts) -> list[str]:
     assert isinstance(output, AutomationLog)  # noqa: S101  # dispatched by schema
     problems: list[str] = []
     for step in output.steps:
-        call = facts.call(step.invocation_id)
+        call = facts.call(step.call_id)
         if call is None:
-            problems.append(f"step {step.invocation_id!r}: no such tool call in this run")
+            problems.append(f"step {step.call_id!r}: no such tool call in this run")
             continue
         recorded = _STEP_OUTCOME[call.outcome]
         if recorded != step.outcome:
-            problems.append(
-                f"step {step.invocation_id}: recorded {recorded}, reported {step.outcome}"
-            )
+            problems.append(f"step {step.call_id}: recorded {recorded}, reported {step.outcome}")
     acting = [
         c
         for c in facts.calls
@@ -623,13 +628,13 @@ def _check_automation_log(output: _Output, facts: RunFacts) -> list[str]:
         and c.outcome in (ToolOutcome.SUCCESS, ToolOutcome.ERROR, ToolOutcome.AMBIGUOUS)
         and not c.name.startswith(SUBMIT_PREFIX)
     ]
-    reported = {s.invocation_id for s in output.steps}
+    reported = {s.call_id for s in output.steps}
     problems += [
-        f"{c.name} ({c.invocation_id}) changed or may have changed something; report it as a step"
+        f"{c.name} ({c.call_id}) changed or may have changed something; report it as a step"
         for c in acting
-        if c.invocation_id not in reported
+        if c.call_id not in reported
     ]
-    unknown = {c.invocation_id for c in facts.calls if c.outcome is ToolOutcome.AMBIGUOUS}
+    unknown = {c.call_id for c in facts.calls if c.outcome is ToolOutcome.AMBIGUOUS}
     problems += [
         f"{i}: its outcome is unknown; list it in unknown_side_effects"
         for i in sorted(unknown - set(output.unknown_side_effects))

@@ -36,6 +36,7 @@ def _call(
     return Call(
         order=order,
         invocation_id=invocation or f"inv-{order}",
+        call_id=invocation or f"inv-{order}",
         name=name,
         arguments=dict(arguments),
         outcome=outcome,
@@ -84,8 +85,8 @@ def test_an_honest_change_report_is_accepted() -> None:
         "summary": "Fixed the bound.",
         "changes": [{"file": "./src/a.py", "summary": "use <="}],
         "verifications": [
-            {"invocation_id": "inv-4", "command": "run_tests", "outcome": "passed"},
-            {"invocation_id": "inv-1", "command": "run_tests", "outcome": "failed"},
+            {"call_id": "inv-4", "command": "run_tests", "outcome": "passed"},
+            {"call_id": "inv-1", "command": "run_tests", "outcome": "failed"},
         ],
     }
     assert _check("change-report", report, _engineering()) == []
@@ -96,12 +97,12 @@ def test_an_honest_change_report_is_accepted() -> None:
     [
         ({"file": "src/b.py", "summary": "x"}, None, "did not change it"),  # the patch was denied
         ({"file": "src/c.py", "summary": "x"}, None, "did not change it"),  # never touched
-        (None, {"invocation_id": "inv-1", "command": "run_tests", "outcome": "passed"}, "failed;"),
-        (None, {"invocation_id": "inv-4", "command": "lint", "outcome": "passed"}, "not lint"),
-        (None, {"invocation_id": "inv-9", "command": "run_tests", "outcome": "passed"}, "no such"),
+        (None, {"call_id": "inv-1", "command": "run_tests", "outcome": "passed"}, "failed;"),
+        (None, {"call_id": "inv-4", "command": "lint", "outcome": "passed"}, "not lint"),
+        (None, {"call_id": "inv-9", "command": "run_tests", "outcome": "passed"}, "no such"),
         (
             None,
-            {"invocation_id": "inv-3", "command": "apply_patch", "outcome": "failed"},
+            {"call_id": "inv-3", "command": "apply_patch", "outcome": "failed"},
             "did not run",
         ),
     ],
@@ -126,7 +127,7 @@ def test_a_check_that_ran_before_the_last_change_does_not_verify_it() -> None:
     report = {
         "summary": "s",
         "changes": [{"file": "a.py", "summary": "x"}],
-        "verifications": [{"invocation_id": "inv-0", "command": "run_tests", "outcome": "passed"}],
+        "verifications": [{"call_id": "inv-0", "command": "run_tests", "outcome": "passed"}],
     }
     assert any("before the last change" in p for p in _check("change-report", report, facts))
 
@@ -188,9 +189,14 @@ def test_an_empty_review_is_valid() -> None:
 def test_research_citations_must_be_evidence_the_run_received() -> None:
     child = "6f1c2a3b-0000-4000-8000-000000000001"
     failed = "6f1c2a3b-0000-4000-8000-000000000002"
+    unchecked = "6f1c2a3b-0000-4000-8000-000000000003"
     facts = _facts(
         evidence={"C-0123abcd": "Keys rotate every 90 days."},
-        children={child: "completed", failed: "failed"},
+        children={
+            child: ("completed", "accepted"),
+            failed: ("failed", None),
+            unchecked: ("completed", "rejected"),
+        },
     )
     brief = {
         "question": "q",
@@ -205,6 +211,8 @@ def test_research_citations_must_be_evidence_the_run_received() -> None:
     assert any("not evidence" in p for p in _check("research-brief", fabricated, facts))
     unfinished = {**brief, "findings": [{"statement": "x", "citations": [failed]}]}
     assert any("did not complete" in p for p in _check("research-brief", unfinished, facts))
+    rejected = {**brief, "findings": [{"statement": "x", "citations": [unchecked]}]}
+    assert any("no accepted output" in p for p in _check("research-brief", rejected, facts))
 
 
 def test_research_findings_need_citations_and_contradictions_two() -> None:
@@ -314,9 +322,9 @@ def test_every_step_has_its_recorded_outcome_and_unknowns_are_listed() -> None:
         _call(3, "purge", outcome=ToolOutcome.DENIED, effect=ToolEffect.DESTRUCTIVE),
     )
     steps: list[dict[str, str]] = [
-        {"description": "rotate", "invocation_id": "inv-1", "outcome": "succeeded"},
-        {"description": "restart", "invocation_id": "inv-2", "outcome": "unknown"},
-        {"description": "purge", "invocation_id": "inv-3", "outcome": "not_run"},
+        {"description": "rotate", "call_id": "inv-1", "outcome": "succeeded"},
+        {"description": "restart", "call_id": "inv-2", "outcome": "unknown"},
+        {"description": "purge", "call_id": "inv-3", "outcome": "not_run"},
     ]
     log: dict[str, Any] = {
         "summary": "s",

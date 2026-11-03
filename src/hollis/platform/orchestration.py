@@ -10,13 +10,16 @@ A delegation is a tool call whose execution is a child run. An agent with `deleg
    that the run's owner may still run agents;
 3. narrows permissions: the child's memory and knowledge are its agent's configuration, within
    the owner's current grants, within the parent run's access. Tool calls are decided by the
-   workspace policy like any run's, with the delegation depth as an extra fact;
+   workspace policy like any run's, with the delegation depth as an extra fact, and held to
+   every policy overlay rule of the parent run before its own agent's (ADR-0035): overlays only
+   accumulate down a tree, so a delegated run can never do what its parent could not;
 4. creates and schedules the child, then waits for it (an approval it needs is decided like any
    other, by someone allowed to approve on the child run);
 5. returns a report built from the child's *log*: the outcome Hollis observed, usage, tool calls
    with unknown outcome, the grounding check of its answer, the evidence it cited (rendered from
-   recorded sources, never from its text), its self-reported status, and its answer framed as
-   untrusted data.
+   recorded sources, never from its text), its structured output and whether it passed its
+   contract's checks (ADR-0034), its self-reported status, and its answer framed as untrusted
+   data.
 
 `Orchestrator` also provides the tree-wide token budget check (a `ModelCallGuard`), cascading
 cancellation and the orchestration view.
@@ -38,12 +41,14 @@ from hollis.adapters.credentials import MissingCredential
 from hollis.gateway.gateway import RoutingDenied, WrongTask
 from hollis.knowledge.tools import handle as evidence_handle
 from hollis.platform.auth import Principal
+from hollis.platform.outputs import output_view, run_setup
 from hollis.platform.schemas import (
     Agent,
     DisagreementView,
     OrchestrationNode,
     OrchestrationTotals,
     OrchestrationView,
+    OutputView,
     RefusalView,
     ReportView,
     Role,
@@ -96,6 +101,8 @@ WAIT_MARGIN_S = 2.0
 POLL_S = 5.0
 EVIDENCE_BLOCKS = 6
 EVIDENCE_CHARS = 700
+OUTPUT_CHARS = 4000
+"""Of a child's structured output shown in its report."""
 MIN_ANSWER_CHARS = 400
 DELEGATION_SHARE = 0.75
 """Work below a run may use this share of the run's token budget: new delegations stop, and
@@ -421,6 +428,7 @@ def build_report(child: RunState, agent: str, *, limit: int, timed_out: bool = F
     grounding = child.grounding
     unknown = _unknown_side_effects(child)
     calls = sum(len(t.invocations) for t in child.turns)
+    output = output_view(child)
     meta: dict[str, JsonValue] = {
         "kind": REPORT_KIND,
         "agent": agent,
@@ -446,6 +454,7 @@ def build_report(child: RunState, agent: str, *, limit: int, timed_out: bool = F
             "tool_calls": calls,
         },
         "evidence": cast(list[JsonValue], list(evidence)),
+        "output": cast(JsonValue, output.model_dump(mode="json")) if output else None,
     }
     header = [
         f"Delegation report: agent `{agent}`, run {child.run_id}, outcome {outcome} "
@@ -468,6 +477,8 @@ def build_report(child: RunState, agent: str, *, limit: int, timed_out: bool = F
             + ", ".join(unknown)
             + "."
         )
+    if output is not None:
+        header.append(_output_line(output))
     if child.response is not None and outcome == "completed":
         header.append("The answer is the agent's own output, not verified fact.")
     blocks = [
@@ -487,6 +498,23 @@ def build_report(child: RunState, agent: str, *, limit: int, timed_out: bool = F
     return ToolOutput(
         parts=(JsonPart(data=meta), TextPart(text=text)), is_error=outcome != "completed"
     )
+
+
+def _output_line(output: OutputView) -> str:
+    if output.status == "accepted":
+        data = neutralize(json.dumps(output.data, ensure_ascii=False, sort_keys=True))
+        if len(data) > OUTPUT_CHARS:
+            data = data[:OUTPUT_CHARS] + " ... [truncated]"
+        return (
+            f"Output ({output.contract}): accepted by Hollis's checks against the run's log "
+            f"(its references were verified; its judgements are still the agent's): {data}"
+        )
+    if output.status == "rejected":
+        return (
+            f"Output ({output.contract}): rejected after {output.attempts} attempts; it is not "
+            "usable as a result."
+        )
+    return f"Output ({output.contract}): none was submitted."
 
 
 def refusal(agent: str, reason: str) -> ToolOutput:
@@ -690,7 +718,8 @@ class Orchestrator:
         child_limits = limits.narrow(agent.delegation)
         if depth > child_limits.max_depth:
             return f"the {agent.name} agent's own limits allow depth {child_limits.max_depth}"
-        tools = (*agent.tools, *self.tool_names(agent, depth=depth, limits=child_limits))
+        setup = run_setup(ws, agent, inherited=parent.policy)
+        tools = (*setup.tools, *self.tool_names(agent, depth=depth, limits=child_limits))
         budget = agent.budget or RunBudget(max_output_tokens=ws.config.runtime.max_output_tokens)
         if parent.deadline is not None:
             remaining = (parent.deadline - _now()).total_seconds() - WAIT_MARGIN_S
@@ -706,7 +735,7 @@ class Orchestrator:
             inputs=refs,
             evidence=evidence,
         )
-        instructions = "\n\n".join(x for x in (agent.instructions.strip(), REPORT_PROTOCOL) if x)
+        instructions = "\n\n".join(x for x in (setup.instructions, REPORT_PROTOCOL) if x)
         spec = RunSpec(
             model=agent.model,
             input=render_assignment(assignment, reports),
@@ -724,6 +753,7 @@ class Orchestrator:
             ),
             assignment=assignment,
             delegation=child_limits,
+            policy=setup.policy,
         )
         child_id = child_run_id(parent.run_id, ctx.invocation_id)
         try:
@@ -1010,6 +1040,7 @@ class Orchestrator:
                 else None,
                 side_effects_unknown=tuple(meta.get("side_effects_unknown") or ()),
                 evidence=tuple(meta.get("evidence") or ()),
+                output=output_view(state),
             )
         return OrchestrationNode(
             run=summary,

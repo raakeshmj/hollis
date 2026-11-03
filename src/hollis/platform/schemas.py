@@ -19,6 +19,7 @@ from hollis.runtime.grounding import GroundingReport
 from hollis.runtime.knowledge import KnowledgeAccess, RetrievedPassage, SourceTrust
 from hollis.runtime.memory import Certainty, MemoryAccess, MemoryKind, RecalledMemory
 from hollis.runtime.policy import RunBudget
+from hollis.runtime.tools import PolicyOverlayRule
 
 API_VERSION = "1"
 NAME_PATTERN = r"^[a-z0-9][a-z0-9-]{0,62}$"
@@ -239,6 +240,25 @@ class AgentInput(_Input):
     delegation: DelegationOverrides | None = None
     """Narrows the workspace's delegation limits for runs of this agent and below; fields not
     set inherit them."""
+    policy: tuple[PolicyOverlayRule, ...] = Field(default=(), max_length=32)
+    """Overlay rules that make the workspace's tool policy stricter for this agent's runs and
+    every run they delegate (ADR-0035). They can never allow more."""
+    contract: str | None = Field(default=None, pattern=NAME_PATTERN)
+    """An output contract: runs get a `submit_<contract>` tool, and the submission accepted
+    after checks against the run's log is the run's structured output (ADR-0034)."""
+    skills: tuple[str, ...] = Field(default=(), max_length=32)
+    """Workspace Agent Skills offered to the agent by name and description (ADR-0033)."""
+
+
+class AgentOrigin(_View):
+    """The template an agent was made from (ADR-0033)."""
+
+    template: str
+    version: str
+    digest: str
+    parameters: dict[str, str] = {}
+    overrides: tuple[str, ...] = ()
+    """Template-determined fields that were customized; upgrades keep them."""
 
 
 class Agent(AgentInput):
@@ -248,6 +268,189 @@ class Agent(AgentInput):
     updated_at: AwareDatetime
     created_by: str
     version: int = Field(ge=1)
+    origin: AgentOrigin | None = None
+    """Set when the agent was made from a template."""
+
+
+# --- specialization -------------------------------------------------------------------------------
+
+
+class RequirementCheck(_View):
+    requirement: str
+    ok: bool
+    hard: bool
+    """A failed hard check blocks creating an agent; a soft one is a warning."""
+    detail: str
+
+
+class DeploymentFit(_View):
+    deployment: str
+    ok: bool
+    checks: tuple[RequirementCheck, ...]
+
+
+class ParameterView(_View):
+    name: str
+    description: str
+    default: str | None
+    choices: tuple[str, ...] = ()
+    pattern: str | None = None
+
+
+class CapabilityView(_View):
+    id: str
+    version: str
+    name: str
+    description: str
+    tools: tuple[str, ...]
+    optional_tools: tuple[str, ...]
+    configured_commands: bool
+    guidance: str
+    policy: tuple[PolicyOverlayRule, ...]
+    available: bool
+    """Every required tool exists in this workspace."""
+
+
+class TemplateView(_View):
+    id: str
+    version: str
+    name: str
+    description: str
+    source: str
+    """builtin, or workspace:<file name>."""
+    digest: str
+    capabilities: tuple[str, ...]
+    contract: str | None
+    parameters: tuple[ParameterView, ...]
+    examples: tuple[str, ...]
+    ready: bool
+    """No hard workspace requirement fails (the model is checked per deployment)."""
+    checks: tuple[RequirementCheck, ...]
+    agents: tuple[str, ...] = ()
+    """Agents made from this template."""
+
+
+class TemplateDetail(TemplateView):
+    instructions: str
+    """With default parameter values."""
+    tools: tuple[str, ...]
+    """What an agent made now would get."""
+    policy: tuple[PolicyOverlayRule, ...]
+    budget: RunBudget | None
+    skills: tuple[str, ...]
+    requires: dict[str, JsonValue]
+    fits: tuple[DeploymentFit, ...]
+    """Each text deployment the routing policy allows, checked against the model needs."""
+
+
+class ContractView(_View):
+    id: str
+    version: str
+    name: str
+    description: str
+    rules: tuple[str, ...]
+    tool: str
+    input_schema: dict[str, JsonValue]
+
+
+class SkillView(_View):
+    name: str
+    description: str
+    license: str | None = None
+    compatibility: str | None = None
+    metadata: dict[str, str] = {}
+    allowed_tools: tuple[str, ...] = ()
+    """As declared by the skill. Hollis grants nothing from it."""
+    files: tuple[str, ...] = ()
+
+
+class SkillsView(_View):
+    directory: str | None
+    skills: tuple[SkillView, ...]
+    problems: tuple[str, ...] = ()
+    """Skill folders that could not be loaded, and why."""
+
+
+class AgentOverrides(_Input):
+    """Agent fields to set instead of the template's (or besides it, for fields a template
+    never sets). Unset fields are not overridden."""
+
+    description: str | None = Field(default=None, max_length=500)
+    instructions: str | None = Field(default=None, max_length=50_000)
+    tools: tuple[str, ...] | None = None
+    memory: MemoryAccess | None = None
+    knowledge: KnowledgeAccess | None = None
+    budget: RunBudget | None = None
+    context: ContextPolicy | None = None
+    record_episodes: bool | None = None
+    delegates: tuple[str, ...] | None = Field(default=None, max_length=16)
+    delegation: DelegationOverrides | None = None
+    policy: tuple[PolicyOverlayRule, ...] | None = Field(default=None, max_length=32)
+    skills: tuple[str, ...] | None = Field(default=None, max_length=32)
+
+
+class FromTemplateInput(_Input):
+    template: str = Field(pattern=NAME_PATTERN)
+    name: str = Field(pattern=NAME_PATTERN)
+    model: str = Field(min_length=1)
+    parameters: dict[str, str] = Field(default_factory=dict[str, str], max_length=16)
+    overrides: AgentOverrides = AgentOverrides()
+
+
+class FieldChange(_View):
+    field: str
+    before: JsonValue
+    after: JsonValue
+
+
+class UpgradePreview(_View):
+    agent: str
+    template: str
+    from_version: str
+    to_version: str
+    from_digest: str
+    to_digest: str
+    up_to_date: bool
+    changes: tuple[FieldChange, ...]
+    """Fields that would change."""
+    kept: tuple[str, ...]
+    """Customized fields the upgrade keeps."""
+    checks: tuple[RequirementCheck, ...] = ()
+
+
+class UpgradeInput(_Input):
+    digest: str = Field(min_length=1, max_length=100)
+    """The template digest the preview showed: the upgrade is refused if it changed since."""
+    reset: tuple[str, ...] = ()
+    """Customized fields to take from the template again."""
+
+
+class ExportInput(_Input):
+    id: str | None = Field(default=None, pattern=NAME_PATTERN)
+    """Template id (default: the agent's name)."""
+    version: str = Field(default="1.0.0", pattern=r"^\d{1,4}\.\d{1,4}\.\d{1,4}$")
+
+
+class TemplateExport(_View):
+    id: str
+    version: str
+    filename: str
+    content: str
+    """The template as TOML: put it in a workspace's templates directory to use it there."""
+
+
+class OutputView(_View):
+    """A run's structured output under its agent's contract (ADR-0034)."""
+
+    contract: str
+    status: Literal["accepted", "rejected", "missing"]
+    """accepted: a submission passed the checks against the run's log; rejected: submissions
+    were made and none passed; missing: none was made."""
+    attempts: int
+    data: dict[str, JsonValue] | None = None
+    invocation_id: str | None = None
+    problems: tuple[str, ...] = ()
+    """Why the latest rejected submission was refused."""
 
 
 # --- runs -----------------------------------------------------------------------------------------
@@ -492,6 +695,9 @@ class RunDetail(_View):
     """Ancestors of a delegated run, root first."""
     assignment: Assignment | None = None
     delegation: DelegationLimits | None = None
+    policy: tuple[PolicyOverlayRule, ...] = ()
+    """Overlay rules this run was held to (its agent's and its ancestors')."""
+    output: OutputView | None = None
 
 
 class EventView(_View):
@@ -558,6 +764,8 @@ class ReportView(_View):
     verification: VerificationView | None = None
     side_effects_unknown: tuple[str, ...] = ()
     evidence: tuple[str, ...] = ()
+    output: OutputView | None = None
+    """The child's structured output and whether it passed its contract's checks."""
 
 
 class OrchestrationNode(_View):

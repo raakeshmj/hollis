@@ -30,6 +30,10 @@ for version control). `hollis init` creates both.
     [orchestration]             # limits on agents delegating to agents (ADR-0031)
     max_depth = 2
     token_budget = 200000
+
+    [specialists]               # Agent Skills and workspace templates (ADR-0033)
+    skills_dir = "skills"
+    templates_dir = "agent-templates"
 """
 
 import os
@@ -151,6 +155,15 @@ class KnowledgeConfig(_Model):
     """Directories (relative to the workspace) the API may sync from."""
 
 
+class SpecialistsConfig(_Model):
+    """Where a workspace keeps Agent Skills and its own agent templates (ADR-0033). Both are
+    relative to the workspace directory. File tools never write them: they become agents'
+    instructions."""
+
+    skills_dir: str = "skills"
+    templates_dir: str = "agent-templates"
+
+
 class OrchestrationConfig(DelegationLimits):
     """Workspace-wide delegation limits (ADR-0031). An agent's own `delegation` limits can only
     narrow them."""
@@ -168,6 +181,7 @@ class WorkspaceConfig(_Model):
     policy: PolicyConfig = PolicyConfig()
     knowledge: KnowledgeConfig = KnowledgeConfig()
     orchestration: OrchestrationConfig = OrchestrationConfig()
+    specialists: SpecialistsConfig = SpecialistsConfig()
 
 
 class ConfigError(ValueError):

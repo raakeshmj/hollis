@@ -2,8 +2,10 @@
 
 `Workspace.open(root)` opens the stores in `.hollis/` and builds, from `hollis.toml`:
 - the model gateway (plus the built-in demo model) and the knowledge embedder;
-- the tool catalog: filesystem tools (if configured), artifact, knowledge and memory tools, MCP
-  servers (connected on demand), and one `delegate_<agent>` tool per agent (ADR-0030);
+- the tool catalog: filesystem, code, data and docs tools (if configured), configured commands,
+  git tools, artifact, knowledge and memory tools, one `submit_<contract>` tool per output
+  contract, `skill_read` (if the workspace has skills), MCP servers (connected on demand), and
+  one `delegate_<agent>` tool per agent (ADR-0030);
 - the tool policy (configured rules, falling back to the fail-safe default);
 - one `Runner` with deferred approvals (runs wait for a decision instead of being denied) and
   observers that keep the run index current and wake live streams;
@@ -45,6 +47,7 @@ from hollis.platform.config import (
 from hollis.platform.coordinator import WORKFLOW_DEPLOYMENT, WorkflowCoordinator
 from hollis.platform.db import WorkspaceDb
 from hollis.platform.orchestration import DelegateTool, Orchestrator, delegation_effect
+from hollis.platform.outputs import SubmitTool
 from hollis.platform.schemas import Agent
 from hollis.platform.supervisor import EventBus, RunSupervisor
 from hollis.runtime.embedding import EmbeddingProvider
@@ -54,6 +57,8 @@ from hollis.runtime.runner import Runner
 from hollis.runtime.state import RunState, fold
 from hollis.runtime.store import load_run
 from hollis.runtime.tools import Tool, ToolEffect, ToolRef
+from hollis.specialists import CONTRACTS, skill_tools
+from hollis.specialists import Catalog as TemplateCatalog
 from hollis.tools import CallbackApprover, Rule, RulePolicy, ToolRegistry
 from hollis.tools.builtin import (
     artifact_tools,
@@ -188,6 +193,10 @@ class Workspace:
         self.retriever = KnowledgeRetriever(self.knowledge_store, embedder=self.embedder)
         self.registry = ToolRegistry()
         self.tool_sources: dict[str, str] = {}
+        self.skills_dir = (self.root / config.specialists.skills_dir).resolve()
+        self.templates_dir = (self.root / config.specialists.templates_dir).resolve()
+        self.fs_root: Path | None = None
+        self.fs_writable = False
         self._add_tools("builtin:artifacts", artifact_tools(self.artifacts))
         self._add_tools("builtin:knowledge", knowledge_tools(self.knowledge_store, self.retriever))
         self._add_tools(
@@ -197,6 +206,7 @@ class Workspace:
         if fs is not None:
             root = (self.root / fs.root).resolve()
             if root.is_dir():
+                self.fs_root, self.fs_writable = root, fs.writable
                 protected = self.protected_paths(root)
                 self._add_tools(
                     "builtin:filesystem",
@@ -221,6 +231,9 @@ class Workspace:
                 self._add_tools("builtin:commands", [self._command(command)])
             except ValueError as exc:
                 log.warning("command %s disabled: %s", command.name, exc)
+        self._add_tools("builtin:contracts", [SubmitTool(self, c) for c in CONTRACTS.values()])
+        if self.skills_dir.is_dir():
+            self._add_tools("builtin:skills", skill_tools(self.skills_dir))
         # Connections survive a rebuild unless their configuration changed (see apply_config).
         self.mcp = {c.name: self.mcp.get(c.name) or McpConnection(c) for c in config.tools.mcp}
         for connection in self.mcp.values():
@@ -271,8 +284,15 @@ class Workspace:
         return tuple(protected)
 
     def instruction_dirs(self) -> list[Path]:
-        """Directories whose files become agents' instructions."""
-        return []
+        """Directories whose files become agents' instructions: skills and templates."""
+        return [self.skills_dir, self.templates_dir]
+
+    def catalog(self) -> TemplateCatalog:
+        """First-party templates and this workspace's own (read fresh: files may change)."""
+        return TemplateCatalog.load(self.templates_dir)
+
+    def configured_commands(self) -> tuple[str, ...]:
+        return tuple(n for n, source in self.tool_sources.items() if source == "builtin:commands")
 
     def _command(self, command: CommandConfig) -> Tool:
         if command.name.startswith(RESERVED_PREFIXES):

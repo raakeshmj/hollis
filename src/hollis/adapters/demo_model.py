@@ -17,6 +17,12 @@ multi-turn runs. Behaviour is a small set of rules applied to the request:
   passes the earlier reports along; after the last wave, a summary of every report;
 - as a delegated agent: earlier reports in its input are reviewed side by side, and every answer
   ends with the JSON self-report the report protocol asks for;
+- as a specialist (a `submit_<contract>` tool is offered, ADR-0034): a short, fixed procedure for
+  its contract, then a submission built only from what the tools returned, then an answer that
+  says whether Hollis accepted it. The results are honest and minimal: a code review with no
+  findings (rules cannot judge code), a change only for `replace "a" with "b" in <path>`, a
+  research brief quoting the top passages, a data analysis that counts a table's rows, a docs
+  change only for `write <path>.md: <text>`, an automation log of one configured command;
 - otherwise: an explanation that this is the demo model and how to configure a real one.
 
 Every response starts with "[demo]" so it can never be mistaken for model output.
@@ -24,11 +30,19 @@ Every response starts with "[demo]" so it can never be mistaken for model output
 
 import json
 import re
+from typing import cast
 
 from pydantic import JsonValue
 
 from hollis.runtime.context import estimate_text
-from hollis.runtime.conversation import AssistantTurn, ContextKind, ToolCall, ToolResultsTurn
+from hollis.runtime.conversation import (
+    AssistantTurn,
+    ContextKind,
+    ToolCall,
+    ToolResultMessage,
+    ToolResultsTurn,
+    ToolSpec,
+)
 from hollis.runtime.delegation import extract_reports, report_meta, restore_citations
 from hollis.runtime.grounding import tool_evidence
 from hollis.runtime.model import (
@@ -87,6 +101,9 @@ class DemoModelProvider:
         team = _team_plan(request.input, tools)
         if team and (last is None or isinstance(last, ToolResultsTurn)):
             return self._delegate(request, team)
+        submit = _submit_tool(tools)
+        if submit is not None and (last is None or isinstance(last, ToolResultsTurn)):
+            return self._specialist(request, submit)
         if isinstance(last, ToolResultsTurn):
             text = self._report(last)
             return self._answer(request, text)
@@ -177,10 +194,54 @@ class DemoModelProvider:
             if step_wave == wave
         )
         if not calls:
+            submit = _submit_tool({spec.name for spec in request.tools})
+            if submit is not None:
+                return self._specialist(request, submit)
             return self._answer(request, _team_summary(request))
         names = ", ".join(c.name.removeprefix("delegate_") for c in calls)
         return ModelResponse(
             content=f"[demo] Delegating to {names}.",
+            stop_reason=StopReason.TOOL_USE,
+            tool_calls=calls,
+            usage=self._usage(request, names),
+            served_model=self._descriptor.model,
+        )
+
+    def _specialist(self, request: ModelRequest, submit: str) -> ModelResponse:
+        """One step of a specialist's fixed demo procedure (see the module docstring)."""
+        done = _done(request.history)
+        submitted = [result for call, result in done if call.name == submit]
+        if submitted:
+            verdict = submitted[-1]
+            if verdict.is_error:
+                problem = next(
+                    (line[2:] for line in verdict.content.splitlines() if line.startswith("- ")),
+                    _clip(verdict.content, 200),
+                )
+                return self._answer(
+                    request, f"[demo] Hollis rejected the submission: {_clip(problem, 300)}"
+                )
+            return self._answer(
+                request,
+                f"[demo] Submitted the result with {submit}; Hollis's checks against this run "
+                "accepted it. The demo model follows fixed rules, so the result is minimal.",
+            )
+        step = _SPECIALIST_STEPS.get(submit, _no_step)(request, done)
+        if isinstance(step, ToolCall):
+            return self._calls(request, (step,))
+        if step is None:
+            return self._answer(
+                request,
+                "[demo] The tools gave nothing the demo model can report under this agent's "
+                "contract, so it submits nothing.",
+            )
+        call = ToolCall(call_id=_call_id(request, submit), name=submit, arguments=step)
+        return self._calls(request, (call,))
+
+    def _calls(self, request: ModelRequest, calls: tuple[ToolCall, ...]) -> ModelResponse:
+        names = ", ".join(c.name for c in calls)
+        return ModelResponse(
+            content=f"[demo] Calling {names}.",
             stop_reason=StopReason.TOOL_USE,
             tool_calls=calls,
             usage=self._usage(request, names),
@@ -309,3 +370,317 @@ def _with_self_report(text: str) -> str:
         "open_questions": [],
     }
     return f"{text}\n\n```json\n{json.dumps(report)}\n```"
+
+
+# --- specialists (ADR-0034) ----------------------------------------------------------------------
+#
+# Each step function looks at what was done so far and returns the next tool call, the
+# submission's arguments (a dict) when it is time to submit, or None when there is nothing
+# honest to submit.
+
+type Done = list[tuple[ToolCall, ToolResultMessage]]
+type Step = ToolCall | dict[str, JsonValue] | None
+_BUILTIN = re.compile(
+    r"^(fs|code|data|docs|git|knowledge|memory|artifact|skill|submit|delegate|mcp)_|^apply_patch$"
+)
+_PATH = re.compile(r"(?<![\w/])((?:[\w.-]+/)*[\w-]+\.[A-Za-z0-9]{1,8})\b")
+_NUMBERED = re.compile(r"^\s*(\d+) \| (.*)$", re.M)
+
+
+def _submit_tool(tools: set[str]) -> str | None:
+    return next((t for t in sorted(tools) if t.startswith("submit_")), None)
+
+
+def _done(history: tuple[object, ...] | list[object]) -> Done:
+    calls = {
+        call.call_id: call
+        for item in history
+        if isinstance(item, AssistantTurn)
+        for call in item.tool_calls
+    }
+    return [
+        (calls[result.call_id], result)
+        for item in history
+        if isinstance(item, ToolResultsTurn)
+        for result in item.results
+        if result.call_id in calls
+    ]
+
+
+def _call_id(request: ModelRequest, name: str) -> str:
+    """Unique within a run: the turn number and the tool."""
+    turns = sum(1 for item in request.history if isinstance(item, AssistantTurn))
+    return f"demo_{turns}_{name}"
+
+
+def _make(request: ModelRequest, name: str, **arguments: JsonValue) -> ToolCall | None:
+    if name not in {spec.name for spec in request.tools}:
+        return None
+    return ToolCall(call_id=_call_id(request, name), name=name, arguments=dict(arguments))
+
+
+def _last(done: Done, name: str) -> tuple[ToolCall, ToolResultMessage] | None:
+    return next(((c, r) for c, r in reversed(done) if c.name == name), None)
+
+
+def _check_tool(request: ModelRequest) -> ToolSpec | None:
+    """A configured command that looks like a check and needs no arguments."""
+    for spec in request.tools:
+        required = spec.input_schema.get("required") or []
+        if (
+            not _BUILTIN.match(spec.name)
+            and not required
+            and re.search(r"test|check|lint|build", spec.name)
+        ):
+            return spec
+    return None
+
+
+def _command(request: ModelRequest) -> ToolSpec | None:
+    """The first configured command that needs no arguments."""
+    for spec in request.tools:
+        if not _BUILTIN.match(spec.name) and not (spec.input_schema.get("required") or []):
+            return spec
+    return None
+
+
+def _no_step(request: ModelRequest, done: Done) -> Step:
+    return None
+
+
+def _code_review(request: ModelRequest, done: Done) -> Step:
+    path = _PATH.search(request.input)
+    if not done:
+        if path and (call := _make(request, "code_read", path=path.group(1), start=1, end=80)):
+            return call
+        call = _make(request, "git_diff") or _make(
+            request, "code_search", query=_keyword(request.input)
+        )
+        if call is not None:
+            return call
+    read = [c for c, r in done if not r.is_error]
+    scope: list[JsonValue] = [
+        str((c.arguments or {})["path"])
+        for c in read
+        if c.name == "code_read" and "path" in (c.arguments or {})
+    ]
+    looked = ", ".join(str(s) for s in scope) or "the diff and search results"
+    return {
+        "summary": f"[demo] Rules cannot judge code, so this review reports no findings. It "
+        f"looked at {looked}.",
+        "scope": scope,
+        "findings": [],
+    }
+
+
+def _change(request: ModelRequest, done: Done) -> Step:
+    rule = re.search(r'replace\s+"([^"]+)"\s+with\s+"([^"]*)"\s+in\s+(\S+)', request.input, re.I)
+    if rule is None:
+        return {
+            "summary": '[demo] The demo model only makes changes asked as: replace "a" with "b" '
+            "in <path>. Nothing was changed.",
+        }
+    old, new, path = rule.group(1), rule.group(2), rule.group(3).rstrip(".")
+    read = _last(done, "code_read")
+    if read is None:
+        return _make(request, "code_read", path=path, start=1, end=400) or {
+            "summary": "[demo] No code tools: nothing was changed."
+        }
+    patched = _last(done, "apply_patch")
+    if patched is None and not read[1].is_error:
+        lines = {int(n): text for n, text in _NUMBERED.findall(read[1].content)}
+        target = next((n for n in sorted(lines) if old in lines[n]), None)
+        if target is not None:
+            patch = _patch(path, lines, target, lines[target].replace(old, new, 1))
+            if call := _make(request, "apply_patch", patch=patch):
+                return call
+    check = _check_tool(request)
+    applied = patched is not None and not patched[1].is_error
+    verified = next(((c, r) for c, r in done if check and c.name == check.name), None)
+    if applied and check is not None and verified is None:
+        return ToolCall(call_id=_call_id(request, check.name), name=check.name, arguments={})
+    changes: list[JsonValue] = (
+        [{"file": path, "summary": f"replaced {old!r} with {new!r}"}] if applied else []
+    )
+    verifications: list[JsonValue] = (
+        [
+            {
+                "call_id": verified[0].call_id,
+                "command": verified[0].name,
+                "outcome": "failed" if verified[1].is_error else "passed",
+            }
+        ]
+        if verified
+        else []
+    )
+    if applied:
+        summary = f'[demo] Replaced "{old}" with "{new}" in {path}.'
+    elif patched is not None:
+        summary = f"[demo] The patch to {path} was not applied: {_clip(patched[1].content, 160)}"
+    else:
+        summary = f'[demo] "{old}" was not found in {path}; nothing was changed.'
+    return {"summary": summary, "changes": changes, "verifications": verifications}
+
+
+def _patch(path: str, lines: dict[int, str], target: int, replacement: str) -> str:
+    before = [n for n in (target - 1,) if n in lines]
+    after = [n for n in (target + 1,) if n in lines]
+    start = before[0] if before else target
+    count = len(before) + 1 + len(after)
+    body = [f" {lines[n]}" for n in before] + [f"-{lines[target]}", f"+{replacement}"]
+    body += [f" {lines[n]}" for n in after]
+    header = f"--- a/{path}\n+++ b/{path}\n@@ -{start},{count} +{start},{count} @@\n"
+    return header + "\n".join(body) + "\n"
+
+
+def _research(request: ModelRequest, done: Done) -> Step:
+    reports = [(c, r) for c, r in done if c.name.startswith("delegate_")]
+    if reports:  # a coordinator: cite the completed delegations by run id
+        findings: list[JsonValue] = []
+        for _, result in reports:
+            meta = report_meta(result.content)
+            if meta is None or meta.get("outcome") != "completed":
+                continue
+            output = meta.get("output")
+            status = (
+                cast(dict[str, JsonValue], output).get("status")
+                if isinstance(output, dict)
+                else None
+            )
+            if isinstance(output, dict) and status != "accepted":
+                continue  # its answer was not checked: not a source
+            bodies = " ".join(b for _, _, b in extract_reports(result.content))
+            text = _clip(_findings(bodies), 240) if bodies else "a result"
+            findings.append(
+                {
+                    "statement": f"{meta.get('agent')} reported: {text}",
+                    "citations": [str(meta["run_id"])],
+                }
+            )
+        if not findings:
+            return None
+        return {
+            "question": _clip(request.input, 300),
+            "summary": "[demo] The specialists' reports, side by side. Rules cannot judge "
+            "whether they agree.",
+            "findings": findings,
+        }
+    search = _last(done, "knowledge_search")
+    if search is None:
+        return _make(request, "knowledge_search", query=request.input.strip()[:200])
+    blocks = [] if search[1].is_error else _BLOCK.findall(search[1].content)
+    if not blocks:
+        return None
+    return {
+        "question": _clip(request.input, 300),
+        "summary": "[demo] The top passages, quoted. The demo model does not weigh or combine "
+        "sources.",
+        "findings": [
+            {"statement": _first_sentence(body), "citations": [handle]}
+            for handle, body in blocks[:3]
+        ],
+        "gaps": ["The demo model quotes passages; it does not check them against each other."],
+    }
+
+
+def _analysis(request: ModelRequest, done: Done) -> Step:
+    listing = _last(done, "data_list")
+    if listing is None:
+        return _make(request, "data_list", path=".")
+    first = re.search(r"^(\S+)\t.*\ttable (\w+)$", listing[1].content, re.M)
+    if first is None:
+        return None
+    path, table = first.group(1), first.group(2)
+    query = _last(done, "data_query")
+    if query is None:
+        sql = f'SELECT COUNT(*) AS row_count FROM "{table}"'  # noqa: S608  # a listed table name, quoted
+        return _make(request, "data_query", sql=sql, files=[path])
+    qid = re.search(r"^query_id: (Q-[0-9a-f]{8})$", query[1].content, re.M)
+    count = re.search(r"^\| (\d+) \|$", query[1].content, re.M)
+    if query[1].is_error or qid is None or count is None:
+        return None
+    return {
+        "question": _clip(request.input, 300),
+        "answer": f"[demo] {path} has {count.group(1)} rows. The demo model only counts rows.",
+        "findings": [
+            {
+                "statement": f"{path} has {count.group(1)} rows",
+                "value": int(count.group(1)),
+                "query_id": qid.group(1),
+            }
+        ],
+        "caveats": ["The demo model does not analyse data; it counts the rows of one table."],
+    }
+
+
+def _docs(request: ModelRequest, done: Done) -> Step:
+    rule = re.match(
+        r"(?:please\s+)?write\s+(\S+\.md)\s*:\s*(.+)$", request.input.strip(), re.I | re.S
+    )
+    if rule is None:
+        return None
+    path = rule.group(1)
+    written = _last(done, "fs_write_file")
+    if written is None:
+        return _make(request, "fs_write_file", path=path, content=rule.group(2).strip() + "\n")
+    if written[1].is_error:
+        return None
+    if _last(done, "docs_check") is None:
+        return _make(request, "docs_check", path=path)
+    return {
+        "summary": f"[demo] Wrote {path} as asked.",
+        "files": [{"file": path, "summary": "written as asked"}],
+    }
+
+
+def _automation(request: ModelRequest, done: Done) -> Step:
+    plan: list[JsonValue] = [
+        _clip(part, 200)
+        for part in re.split(r"\bthen\b|;", request.input, flags=re.I)
+        if part.strip()
+    ] or [_clip(request.input, 200)]
+    command = _command(request)
+    ran = [(c, r) for c, r in done if command is not None and c.name == command.name]
+    if command is not None and not ran:
+        return ToolCall(call_id=_call_id(request, command.name), name=command.name, arguments={})
+    steps: list[JsonValue] = []
+    unknown: list[JsonValue] = []
+    for call, result in ran:
+        outcome = _step_outcome(result)
+        steps.append(
+            {"description": f"run {call.name}", "call_id": call.call_id, "outcome": outcome}
+        )
+        if outcome == "unknown":
+            unknown.append(call.call_id)
+    summary = (
+        f"[demo] Ran {command.name} once; the demo model does not plan further steps."
+        if command is not None
+        else "[demo] No configured command needs no arguments, so nothing was run."
+    )
+    return {"summary": summary, "plan": plan, "steps": steps, "unknown_side_effects": unknown}
+
+
+def _step_outcome(result: ToolResultMessage) -> str:
+    if not result.is_error:
+        return "succeeded"
+    text = result.content.casefold()
+    if text.startswith(("tool call rejected", "tool call denied", "tool call not approved")):
+        return "not_run"
+    if "unknown" in text or "ambiguous" in text:
+        return "unknown"
+    return "failed"
+
+
+def _keyword(text: str) -> str:
+    words = re.findall(r"[A-Za-z_]{4,}", text)
+    return words[-1] if words else text.strip()[:40] or "TODO"
+
+
+_SPECIALIST_STEPS = {
+    "submit_code_review": _code_review,
+    "submit_change_report": _change,
+    "submit_research_brief": _research,
+    "submit_data_analysis": _analysis,
+    "submit_docs_change": _docs,
+    "submit_automation_log": _automation,
+}

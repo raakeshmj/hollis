@@ -31,6 +31,7 @@ from hollis.gateway.catalog import AnyDeployment, Deployment, OpenAIEmbeddingsDe
 from hollis.gateway.gateway import RoutingDenied, WrongTask
 from hollis.knowledge.model import Chunk, Source
 from hollis.memory import ChangeKind, MemoryCandidate, MemoryRecord, Provenance, SourceKind
+from hollis.platform import specialists
 from hollis.platform.auth import Principal
 from hollis.platform.config import WorkspaceConfig
 from hollis.platform.coordinator import WORKFLOW_DEPLOYMENT, plan_input
@@ -40,22 +41,28 @@ from hollis.platform.orchestration import (
     effective_knowledge,
     effective_memory,
 )
+from hollis.platform.outputs import run_setup
 from hollis.platform.schemas import (
     Agent,
     AgentInput,
+    AgentOrigin,
     Approval,
     ApprovalDecisionInput,
     ArtifactView,
     CancelInput,
+    CapabilityView,
     ChunkView,
     CollectionInput,
     CollectionView,
+    ContractView,
     CreatedToken,
     CredentialView,
     DeploymentInput,
     DeploymentView,
     EventView,
+    ExportInput,
     ForgetInput,
+    FromTemplateInput,
     Health,
     IngestResultView,
     LineageStep,
@@ -80,16 +87,22 @@ from hollis.platform.schemas import (
     SearchResultView,
     SectionView,
     SettingsView,
+    SkillsView,
     SourceDetail,
     SourceView,
     StartRun,
     StorageView,
     SyncInput,
     SyncResultView,
+    TemplateDetail,
+    TemplateExport,
+    TemplateView,
     TokenInput,
     TokenView,
     ToolActivity,
     ToolView,
+    UpgradeInput,
+    UpgradePreview,
     UsageView,
     WriteResultView,
 )
@@ -110,7 +123,9 @@ from hollis.runtime.policy import RunBudget
 from hollis.runtime.runner import RunSpec, SecretInRunInput, UnknownTool
 from hollis.runtime.state import fold
 from hollis.runtime.store import load_run
-from hollis.runtime.tools import ApprovalDecision, PolicyRequest
+from hollis.runtime.tools import ApprovalDecision, PolicyOverlayRule, PolicyRequest
+from hollis.specialists import CONTRACTS
+from hollis.specialists.skills import NAME as SKILL_NAME
 
 STARTER_AGENT = "assistant"
 STARTER_COLLECTION = "docs"
@@ -543,12 +558,22 @@ class Platform:
 
     async def create_agent(self, p: Principal, spec: AgentInput) -> Agent:
         _admin(p)
+        return await self._insert_agent(p, spec, None)
+
+    async def _insert_agent(
+        self, p: Principal, spec: AgentInput, origin: AgentOrigin | None
+    ) -> Agent:
         if await self.ws.db.query("SELECT 1 FROM agents WHERE name = ?", (spec.name,)):
             raise Conflict(f"agent {spec.name!r} already exists")
         await self._validate_agent(spec)
         now = datetime.now(UTC)
         agent = Agent(
-            **spec.model_dump(), created_at=now, updated_at=now, created_by=p.name, version=1
+            **spec.model_dump(),
+            created_at=now,
+            updated_at=now,
+            created_by=p.name,
+            version=1,
+            origin=origin,
         )
         await self.ws.db.execute(
             "INSERT INTO agents (name, data, version) VALUES (?, ?, 1)",
@@ -561,6 +586,19 @@ class Platform:
     async def update_agent(self, p: Principal, name: str, spec: AgentInput) -> Agent:
         _admin(p)
         current = await self.agent(p, name)
+        return await self._replace_agent(
+            p, current, spec, specialists.customized(current, spec), "agent.update"
+        )
+
+    async def _replace_agent(
+        self,
+        p: Principal,
+        current: Agent,
+        spec: AgentInput,
+        origin: AgentOrigin | None,
+        action: str,
+    ) -> Agent:
+        name = current.name
         if spec.name != name:
             raise InvalidRequest("an agent cannot be renamed; create a new one")
         await self._validate_agent(spec)
@@ -571,13 +609,14 @@ class Platform:
             updated_at=datetime.now(UTC),
             created_by=current.created_by,
             version=current.version + 1,
+            origin=origin,
         )
         await self.ws.db.execute(
             "UPDATE agents SET data = ?, version = ? WHERE name = ?",
             (agent.model_dump_json(), agent.version, name),
         )
         await self.ws.load_agents()
-        await self.ws.db.audit(p.name, "agent.update", name, f"version {agent.version}")
+        await self.ws.db.audit(p.name, action, name, f"version {agent.version}")
         return agent
 
     async def delete_agent(self, p: Principal, name: str) -> None:
@@ -628,6 +667,13 @@ class Platform:
             raise InvalidRequest(f"delegates: no agents named {', '.join(missing)}")
         if len(set(spec.delegates)) != len(spec.delegates):
             raise InvalidRequest("delegates: each agent once")
+        if spec.contract is not None and spec.contract not in CONTRACTS:
+            raise InvalidRequest(
+                f"contract: no contract {spec.contract!r} (one of {', '.join(CONTRACTS)})"
+            )
+        bad = [s for s in spec.skills if not SKILL_NAME.match(s)]
+        if bad:
+            raise InvalidRequest(f"skills: not skill names: {', '.join(bad)}")
 
     def _check_model(self, model: str) -> None:
         """The model must be a configured text deployment the routing policy allows. Credentials
@@ -681,6 +727,51 @@ class Platform:
     def _mcp_tool(self, name: str) -> bool:
         return self.ws.mcp_server(name) is not None
 
+    # --- specialization (ADR-0033) --------------------------------------------------------------
+
+    async def templates(self, p: Principal) -> list[TemplateView]:
+        return await specialists.template_views(self.ws, await self.agents(p))
+
+    async def template(self, p: Principal, template_id: str) -> TemplateDetail:
+        return await specialists.template_detail(self.ws, template_id, await self.agents(p))
+
+    async def capabilities(self, p: Principal) -> list[CapabilityView]:
+        return specialists.capability_views(self.ws)
+
+    async def contracts(self, p: Principal) -> list[ContractView]:
+        return specialists.contract_views()
+
+    async def skills(self, p: Principal) -> SkillsView:
+        return specialists.skills_view(self.ws)
+
+    async def create_agent_from_template(self, p: Principal, spec: FromTemplateInput) -> Agent:
+        """An ordinary agent materialized from a template, remembering its origin."""
+        _admin(p)
+        agent, origin = await specialists.from_template(self.ws, spec)
+        created = await self._insert_agent(p, agent, origin)
+        await self.ws.db.audit(
+            p.name, "agent.from_template", agent.name, f"{origin.template} {origin.version}"
+        )
+        return created
+
+    async def upgrade_preview(self, p: Principal, name: str) -> UpgradePreview:
+        _admin(p)
+        preview, _, _ = await specialists.upgrade_preview(self.ws, await self.agent(p, name))
+        return preview
+
+    async def upgrade_agent(self, p: Principal, name: str, spec: UpgradeInput) -> Agent:
+        """Re-materialize the agent from its template's current version, keeping customized
+        fields (except those in `reset`). Refused if the template changed since the preview."""
+        _admin(p)
+        current = await self.agent(p, name)
+        preview, result, origin = await specialists.upgrade_preview(self.ws, current, spec.reset)
+        specialists.check_upgrade(preview, spec.digest)
+        return await self._replace_agent(p, current, result, origin, "agent.upgrade")
+
+    async def export_agent(self, p: Principal, name: str, spec: ExportInput) -> TemplateExport:
+        _admin(p)
+        return specialists.export(self.ws, await self.agent(p, name), spec)
+
     # --- runs -----------------------------------------------------------------------------------
 
     async def start_run(self, p: Principal, spec: StartRun) -> RunSummary:
@@ -690,6 +781,7 @@ class Platform:
         _operator(p)
         record_episodes = False
         delegation: DelegationLimits | None = None
+        policy: tuple[PolicyOverlayRule, ...] = ()
         default = self.ws.config.runtime.default_agent
         if spec.plan is not None:
             if spec.agent is not None or spec.model is not None or spec.tools or spec.instructions:
@@ -701,7 +793,9 @@ class Platform:
             if spec.model is not None or spec.tools or spec.instructions is not None:
                 raise InvalidRequest("give an agent, or a model with tools and instructions")
             agent = await self.agent(p, spec.agent)
-            model, instructions, tools = agent.model, agent.instructions or None, agent.tools
+            setup = run_setup(self.ws, agent)
+            model, instructions, tools = agent.model, setup.instructions or None, setup.tools
+            policy = setup.policy
             budget = agent.budget or RunBudget(
                 max_output_tokens=self.ws.config.runtime.max_output_tokens
             )
@@ -738,6 +832,7 @@ class Platform:
             memory=memory,
             knowledge=effective_knowledge(knowledge, p),
             delegation=delegation,
+            policy=policy,
         )
         state_id = await self._create(p, run_spec, agent=spec.agent, session=spec.session)
         if record_episodes and memory is not None and memory.write:

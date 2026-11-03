@@ -890,6 +890,8 @@ export interface components {
              *     }
              */
             context: components["schemas"]["ContextPolicy"];
+            /** Contract */
+            contract?: string | null;
             /**
              * Created At
              * Format: date-time
@@ -919,11 +921,22 @@ export interface components {
             model: string;
             /** Name */
             name: string;
+            origin?: components["schemas"]["AgentOrigin"] | null;
+            /**
+             * Policy
+             * @default []
+             */
+            policy: components["schemas"]["PolicyOverlayRule"][];
             /**
              * Record Episodes
              * @default false
              */
             record_episodes: boolean;
+            /**
+             * Skills
+             * @default []
+             */
+            skills: string[];
             /**
              * Tools
              * @default []
@@ -959,6 +972,8 @@ export interface components {
              *     }
              */
             context: components["schemas"]["ContextPolicy"];
+            /** Contract */
+            contract?: string | null;
             /**
              * Delegates
              * @default []
@@ -982,15 +997,49 @@ export interface components {
             /** Name */
             name: string;
             /**
+             * Policy
+             * @default []
+             */
+            policy: components["schemas"]["PolicyOverlayRule"][];
+            /**
              * Record Episodes
              * @default false
              */
             record_episodes: boolean;
             /**
+             * Skills
+             * @default []
+             */
+            skills: string[];
+            /**
              * Tools
              * @default []
              */
             tools: string[];
+        };
+        /**
+         * AgentOrigin
+         * @description The template an agent was made from (ADR-0033).
+         */
+        AgentOrigin: {
+            /** Digest */
+            digest: string;
+            /**
+             * Overrides
+             * @default []
+             */
+            overrides: string[];
+            /**
+             * Parameters
+             * @default {}
+             */
+            parameters: {
+                [key: string]: string;
+            };
+            /** Template */
+            template: string;
+            /** Version */
+            version: string;
         };
         /** Approval */
         Approval: {
@@ -1907,6 +1956,32 @@ export interface components {
             root_run_id: string;
             totals: components["schemas"]["OrchestrationTotals"];
         };
+        /**
+         * OutputView
+         * @description A run's structured output under its agent's contract (ADR-0034).
+         */
+        OutputView: {
+            /** Attempts */
+            attempts: number;
+            /** Contract */
+            contract: string;
+            /** Data */
+            data?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            } | null;
+            /** Invocation Id */
+            invocation_id?: string | null;
+            /**
+             * Problems
+             * @default []
+             */
+            problems: string[];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "accepted" | "rejected" | "missing";
+        };
         /** Page[RunSummary] */
         Page_RunSummary_: {
             /** Items */
@@ -1953,6 +2028,47 @@ export interface components {
             id: string;
             /** Objective */
             objective: string;
+        };
+        /**
+         * PolicyOverlayRule
+         * @description A per-run rule recorded with the run that can only make a policy decision stricter
+         *     (ADR-0035): an agent can be held to less than the workspace allows, never more.
+         *
+         *     It matches a tool call by tool name (glob) and declared effect, and optionally by
+         *     arguments: `outside` maps an argument name to allowed path globs, and the rule matches when
+         *     any value of that argument (a string or a list of strings) is outside all of them, or tries
+         *     to leave the root with `..`. Paths are compared relative, as the tools receive them.
+         */
+        PolicyOverlayRule: {
+            /**
+             * Decision
+             * @enum {string}
+             */
+            decision: "require_approval" | "deny";
+            /**
+             * Effects
+             * @default []
+             */
+            effects: components["schemas"]["ToolEffect"][];
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+            /** Outside */
+            outside?: {
+                [key: string]: string[];
+            };
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+            /**
+             * Tools
+             * @default *
+             */
+            tools: string;
         };
         /** PrincipalInput */
         PrincipalInput: {
@@ -2091,6 +2207,7 @@ export interface components {
             open_questions: string[];
             /** Outcome */
             outcome: string;
+            output?: components["schemas"]["OutputView"] | null;
             /** Reason */
             reason?: string | null;
             /**
@@ -2246,8 +2363,14 @@ export interface components {
             /** Memories */
             memories: components["schemas"]["RecalledMemory"][];
             memory_access: components["schemas"]["MemoryAccess"] | null;
+            output?: components["schemas"]["OutputView"] | null;
             /** Passages */
             passages: components["schemas"]["RetrievedPassage"][];
+            /**
+             * Policy
+             * @default []
+             */
+            policy: components["schemas"]["PolicyOverlayRule"][];
             summary: components["schemas"]["RunSummary"];
             /** Tools */
             tools: string[];
@@ -2666,6 +2789,12 @@ export interface components {
             /** Turn */
             turn: number;
         };
+        /**
+         * ToolEffect
+         * @description Declared by the registering code (trusted), never by a tool description or a server.
+         * @enum {string}
+         */
+        ToolEffect: "read_only" | "mutating" | "destructive";
         /** ToolView */
         ToolView: {
             /** Description */

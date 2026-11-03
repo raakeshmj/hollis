@@ -8,6 +8,7 @@ and the event log; nothing re-implements run semantics.
 from datetime import datetime, timedelta
 from typing import Any
 
+from hollis.platform.outputs import output_view
 from hollis.platform.schemas import (
     ApprovalRequestView,
     AttemptView,
@@ -326,6 +327,8 @@ def detail(
         deadline=state.deadline,
         assignment=state.assignment,
         delegation=state.delegation,
+        policy=state.policy,
+        output=output_view(state),
     )
 
 
