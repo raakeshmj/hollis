@@ -5,14 +5,20 @@ import {
   useAgent,
   useAgents,
   useCollections,
+  useContracts,
   useDeleteAgent,
   useDeployments,
+  useExportAgent,
   useRuns,
   useSaveAgent,
+  useSkills,
   useTools,
+  useUpgradeAgent,
+  useUpgradePreview,
   type AgentDraft,
 } from "../api/hooks";
-import type { Agent } from "../api/types";
+import type { Agent, AgentOrigin } from "../api/types";
+import { Rules } from "./TemplateDetail";
 import { Composer, RunTable } from "../components/runs";
 import { Async, Confirm, Empty, ErrorState, Field, FormError, Loading, PageHead, Policy, Section, useToast } from "../components/ui";
 import { isAdmin, useMe } from "../lib/session";
@@ -29,6 +35,9 @@ const BLANK: AgentDraft = {
   record_episodes: false,
   delegates: [],
   delegation: null,
+  policy: [],
+  contract: null,
+  skills: [],
 };
 
 const LIMITS = [
@@ -62,6 +71,9 @@ function draftOf(agent: Agent): AgentDraft {
     record_episodes: agent.record_episodes,
     delegates: [...agent.delegates],
     delegation: agent.delegation ? { ...agent.delegation } : null,
+    policy: [...(agent.policy ?? [])],
+    contract: agent.contract ?? null,
+    skills: [...(agent.skills ?? [])],
   };
 }
 
@@ -99,6 +111,8 @@ function AgentForm({ agent, readOnly }: { agent: Agent | undefined; readOnly: bo
   );
   const [labels, setLabels] = useState((agent?.knowledge?.labels ?? []).join(", "));
   const agents = useAgents();
+  const contracts = useContracts();
+  const skills = useSkills();
   const [limits, setLimits] = useState<Record<LimitKey, string>>(() => {
     const current = agent?.delegation;
     const value = (key: LimitKey) => {
@@ -177,6 +191,7 @@ function AgentForm({ agent, readOnly }: { agent: Agent | undefined; readOnly: bo
           <Composer agent={agent.name} />
         </Section>
       ) : null}
+      {agent?.origin ? <Origin agent={agent} origin={agent.origin} readOnly={readOnly} /> : null}
       <Section title={agent ? "Definition" : "Definition"}>
         <form
           className="form"
@@ -372,6 +387,86 @@ function AgentForm({ agent, readOnly }: { agent: Agent | undefined; readOnly: bo
                 ))}
               </div>
             ) : null}
+            <div className="form-row">
+              <Field
+                label="Output contract"
+                hint="Runs submit a structured result that Hollis checks against the run’s own log."
+              >
+                {(props) => (
+                  <select
+                    {...props}
+                    value={draft.contract ?? ""}
+                    onChange={(event) => set("contract", event.target.value || null)}
+                  >
+                    <option value="">None (free-text answer)</option>
+                    {contracts.data?.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} ({c.id})
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </Field>
+            </div>
+            <fieldset className="choices">
+              <legend>Skills it is offered</legend>
+              <span className="hint small muted">
+                Agent Skills in this workspace, offered by name and read on demand. Nothing in a skill is executed or
+                grants permissions.
+              </span>
+              {skills.data?.skills.length ? (
+                skills.data.skills.map((skill) => (
+                  <label className="check small" key={skill.name}>
+                    <input
+                      type="checkbox"
+                      checked={draft.skills.includes(skill.name)}
+                      onChange={(event) =>
+                        set(
+                          "skills",
+                          event.target.checked
+                            ? [...draft.skills, skill.name]
+                            : draft.skills.filter((s) => s !== skill.name),
+                        )
+                      }
+                    />
+                    <span>
+                      {skill.name}
+                      <span className="muted"> — {skill.description}</span>
+                    </span>
+                  </label>
+                ))
+              ) : (
+                <span className="small muted">No skills in this workspace.</span>
+              )}
+            </fieldset>
+            <div className="field">
+              <span>Policy overlay</span>
+              <span className="hint">
+                Rules that make the workspace policy stricter for this agent’s runs and every run it delegates. They can
+                never allow more.
+              </span>
+              {draft.policy.length ? (
+                <>
+                  <Rules rules={draft.policy} />
+                  {!readOnly ? (
+                    <div className="row">
+                      {draft.policy.map((rule, index) => (
+                        <button
+                          key={`${rule.name}-${index}`}
+                          type="button"
+                          className="btn small"
+                          onClick={() => set("policy", draft.policy.filter((_, i) => i !== index))}
+                        >
+                          Remove {rule.name || `rule ${index + 1}`}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </>
+              ) : (
+                <span className="small muted">None: the workspace policy alone decides.</span>
+              )}
+            </div>
             <label className="check">
               <input
                 type="checkbox"
@@ -432,5 +527,117 @@ function AgentForm({ agent, readOnly }: { agent: Agent | undefined; readOnly: bo
         </Confirm>
       ) : null}
     </>
+  );
+}
+
+const FIELD_LABELS: Record<string, string> = {
+  description: "description",
+  instructions: "instructions",
+  tools: "tools",
+  contract: "output contract",
+  policy: "policy overlay",
+  skills: "skills",
+  budget: "budget",
+};
+
+/** Where a template-made agent came from: customizations, upgrades, export. */
+function Origin({ agent, origin, readOnly }: { agent: Agent; origin: AgentOrigin; readOnly: boolean }) {
+  const preview = useUpgradePreview(agent.name, !readOnly);
+  const upgrade = useUpgradeAgent();
+  const exporter = useExportAgent();
+  const toast = useToast();
+  const p = preview.data;
+  return (
+    <Section
+      title="Template"
+      aside={
+        !readOnly ? (
+          <button
+            type="button"
+            className="btn small"
+            disabled={exporter.isPending}
+            onClick={() =>
+              exporter.mutate(
+                { name: agent.name },
+                {
+                  onSuccess: (file) => {
+                    const url = URL.createObjectURL(new Blob([file.content], { type: "application/toml" }));
+                    const link = document.createElement("a");
+                    link.href = url;
+                    link.download = file.filename;
+                    link.click();
+                    URL.revokeObjectURL(url);
+                    toast(`Exported ${file.filename}.`);
+                  },
+                },
+              )
+            }
+          >
+            Export as template
+          </button>
+        ) : null
+      }
+    >
+      <dl className="facts small">
+        <dt>Made from</dt>
+        <dd>
+          <Link to={`/templates/${origin.template}`}>{origin.template}</Link> {origin.version}{" "}
+          <span className="mono muted">{origin.digest}</span>
+        </dd>
+        {Object.keys(origin.parameters ?? {}).length ? (
+          <>
+            <dt>Parameters</dt>
+            <dd className="mono">
+              {Object.entries(origin.parameters ?? {})
+                .map(([k, v]) => `${k}=${v || "\"\""}`)
+                .join(", ")}
+            </dd>
+          </>
+        ) : null}
+        <dt>Customized</dt>
+        <dd>
+          {origin.overrides?.length
+            ? origin.overrides.map((f) => FIELD_LABELS[f] ?? f).join(", ")
+            : "nothing: it matches its template"}
+        </dd>
+      </dl>
+      {p && !p.up_to_date ? (
+        <div className="notice" style={{ marginTop: 16 }}>
+          <div>
+            <p>
+              <strong>
+                {p.template} {p.to_version}
+              </strong>{" "}
+              is available (this agent has {p.from_version}). Upgrading changes{" "}
+              {p.changes.length ? p.changes.map((c) => FIELD_LABELS[c.field] ?? c.field).join(", ") : "nothing visible"}
+              {p.kept.length ? `, and keeps your ${p.kept.map((f) => FIELD_LABELS[f] ?? f).join(", ")}` : ""}.
+            </p>
+            {p.checks.filter((c) => c.hard && !c.ok).map((c) => (
+              <p className="small" key={c.requirement}>
+                Blocked: {c.requirement}: {c.detail}
+              </p>
+            ))}
+            <button
+              type="button"
+              className="btn primary small"
+              disabled={upgrade.isPending}
+              onClick={() =>
+                upgrade.mutate(
+                  { name: agent.name, digest: p.to_digest, reset: [] },
+                  { onSuccess: (saved) => toast(`Upgraded ${saved.name} to ${p.to_version}.`) },
+                )
+              }
+            >
+              Upgrade to {p.to_version}
+            </button>
+            <FormError error={upgrade.error} />
+          </div>
+        </div>
+      ) : p ? (
+        <p className="small muted" style={{ marginTop: 12 }}>
+          Up to date with its template.
+        </p>
+      ) : null}
+    </Section>
   );
 }

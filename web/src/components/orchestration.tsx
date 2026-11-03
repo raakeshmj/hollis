@@ -271,6 +271,20 @@ function Node({ node, focus, names }: { node: OrchestrationNode; focus: string; 
         {node.waiting_on ? <span style={{ color: "var(--brass-text)" }}>waiting on {node.waiting_on}</span> : null}
         {node.narrowed.length ? <span className="muted">not granted: {node.narrowed.join(", ")}</span> : null}
       </div>
+      {report?.output ? (
+        <p className="small">
+          <span className={`output-status ${report.output.status}`}>
+            {report.output.contract}: {report.output.status}
+          </span>{" "}
+          <span className="muted">
+            {report.output.status === "accepted"
+              ? "checked against its run’s log"
+              : report.output.status === "rejected"
+                ? `after ${report.output.attempts} attempts`
+                : "no structured result"}
+          </span>
+        </p>
+      ) : null}
       {report?.answer ? (
         <p className="small orch-answer">
           <span className="muted">Reported answer (unverified):</span> {report.answer}

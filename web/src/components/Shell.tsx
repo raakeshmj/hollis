@@ -14,6 +14,7 @@ const WORK: [string, string, IconName][] = [
 ];
 const BUILD: [string, string, IconName][] = [
   ["/agents", "Agents", "agents"],
+  ["/templates", "Templates", "templates"],
   ["/tools", "Tools", "tools"],
   ["/models", "Models", "models"],
   ["/knowledge", "Knowledge", "knowledge"],

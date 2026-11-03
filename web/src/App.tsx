@@ -13,6 +13,8 @@ import { Overview } from "./pages/Overview";
 import { RunDetail } from "./pages/RunDetail";
 import { Runs } from "./pages/Runs";
 import { Settings } from "./pages/Settings";
+import { TemplateDetail } from "./pages/TemplateDetail";
+import { Templates } from "./pages/Templates";
 import { Tools } from "./pages/Tools";
 
 export function App() {
@@ -27,6 +29,8 @@ export function App() {
         <Route path="agents" element={<Agents />} />
         <Route path="agents/new" element={<AgentEdit />} />
         <Route path="agents/:name" element={<AgentEdit />} />
+        <Route path="templates" element={<Templates />} />
+        <Route path="templates/:id" element={<TemplateDetail />} />
         <Route path="tools" element={<Tools />} />
         <Route path="models" element={<Models />} />
         <Route path="knowledge" element={<Knowledge />} />

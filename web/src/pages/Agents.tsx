@@ -16,9 +16,14 @@ export function Agents() {
         description="An agent is a model with instructions, the tools it may use, and the memory and knowledge it may reach. Runs use the caller’s access intersected with the agent’s."
         actions={
           admin ? (
-            <Link className="btn primary" to="/agents/new">
-              <Icon name="plus" size={14} /> New agent
-            </Link>
+            <>
+              <Link className="btn" to="/templates">
+                <Icon name="templates" size={14} /> From a template
+              </Link>
+              <Link className="btn primary" to="/agents/new">
+                <Icon name="plus" size={14} /> New agent
+              </Link>
+            </>
           ) : null
         }
       />
@@ -34,6 +39,9 @@ export function Agents() {
                     <button type="button" className="btn primary" disabled={starter.isPending} onClick={() => starter.mutate()}>
                       Create the starter agent
                     </button>
+                    <Link className="btn" to="/templates">
+                      Start from a template
+                    </Link>
                     <Link className="btn" to="/agents/new">
                       Define one from scratch
                     </Link>
@@ -71,6 +79,17 @@ export function Agents() {
                         {agent.name}
                       </Link>
                       {agent.description ? <div className="small muted">{agent.description}</div> : null}
+                      {agent.origin ? (
+                        <div className="small muted">
+                          from <span className="mono">{agent.origin.template}</span> {agent.origin.version}
+                          {agent.contract ? (
+                            <>
+                              {" "}
+                              · <span className="tag">{agent.contract}</span>
+                            </>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </td>
                     <td className="mono small">{agent.model}</td>
                     <td>

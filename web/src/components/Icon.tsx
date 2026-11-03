@@ -31,6 +31,14 @@ const PATHS = {
   tools: (
     <path d="M12.6 3.4a3.6 3.6 0 0 0-4 4.9l-5 5a1.5 1.5 0 0 0 2.1 2.1l5-5a3.6 3.6 0 0 0 4.9-4l-2.1 2.1-2.2-.6-.6-2.2Z" />
   ),
+  templates: (
+    <>
+      <path d="M3.5 6.5v-3h3M13.5 3.5h3v3M16.5 13.5v3h-3M6.5 16.5h-3v-3" />
+      <circle cx="7.8" cy="7.8" r="1.6" />
+      <path d="M7.8 9.4v3.4h2.8" />
+      <rect x="11.2" y="11.2" width="3" height="3" rx="0.4" fill="currentColor" stroke="none" />
+    </>
+  ),
   models: (
     <>
       <path d="m10 3 7 3.6-7 3.6-7-3.6Z" />

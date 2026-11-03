@@ -2,7 +2,7 @@ import { Fragment, useState } from "react";
 import { Link, useParams } from "react-router";
 import { ApiError } from "../api/client";
 import { useApprovals, useArtifact, useRun, useRunAction, useRunEvents, useRunStream, useRunTree } from "../api/hooks";
-import type { RunDetail as Detail, ToolCallView, TurnView } from "../api/types";
+import type { RunDetail as Detail, OutputView, ToolCallView, TurnView } from "../api/types";
 import { Icon } from "../components/Icon";
 import { AssignmentCard, LineageCrumbs, OrchestrationPanel } from "../components/orchestration";
 import { ApprovalItem, usage } from "../components/runs";
@@ -76,6 +76,7 @@ export function RunDetail() {
         </blockquote>
       )}
       {detail.summary.children > 0 || lineage.length > 0 ? <Orchestration runId={detail.summary.run_id} /> : null}
+      {detail.output ? <Output output={detail.output} /> : null}
       <div className="segmented" role="group" aria-label="View" style={{ marginBottom: 20 }}>
         {(["timeline", "events"] as const).map((value) => (
           <button
@@ -97,6 +98,42 @@ export function RunDetail() {
         <EventLog id={id} />
       )}
     </>
+  );
+}
+
+/** The run's structured result under its agent's output contract (ADR-0034). */
+export function Output({ output }: { output: OutputView }) {
+  const title =
+    output.status === "accepted"
+      ? "Accepted: every reference was checked against this run’s log"
+      : output.status === "rejected"
+        ? `Rejected after ${output.attempts} ${output.attempts === 1 ? "attempt" : "attempts"}`
+        : "No result was submitted";
+  return (
+    <section className={`output-panel ${output.status}`} aria-labelledby="output-heading">
+      <div className="section-head">
+        <h2 id="output-heading">
+          Output <span className="tag">{output.contract}</span>
+        </h2>
+        <span className={`output-status ${output.status}`}>{title}</span>
+      </div>
+      {output.status === "accepted" && output.data ? (
+        <>
+          <pre className="code-block">{JSON.stringify(output.data, null, 2)}</pre>
+          <p className="small muted">
+            Hollis verified what can be verified: the files, lines, queries, commands and sources it names. Whether
+            each judgement is right is still the agent’s claim.
+          </p>
+        </>
+      ) : null}
+      {output.status === "rejected" && output.problems.length ? (
+        <ul className="small rule-list">
+          {output.problems.map((problem) => (
+            <li key={problem}>{problem}</li>
+          ))}
+        </ul>
+      ) : null}
+    </section>
   );
 }
 

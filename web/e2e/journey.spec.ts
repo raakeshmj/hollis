@@ -110,6 +110,7 @@ test("every page has a heading and keyboard-reachable navigation", async ({
     "Runs",
     "Approvals",
     "Agents",
+    "Templates",
     "Tools",
     "Models",
     "Knowledge",
@@ -195,4 +196,35 @@ test("an orchestration is inspected from the root and from a delegated run", asy
   await nav(page, "Runs").click();
   await expect(page.getByText("+1 delegated")).toBeVisible();
   await expect(page.getByText("@researcher what is hollis?")).toBeVisible();
+});
+
+test("a specialist is made from a template and its checked output is shown", async ({
+  page,
+}) => {
+  await signIn(page);
+  await nav(page, "Templates").click();
+  const gallery = page.getByRole("list", { name: "Templates" });
+  await expect(
+    gallery.getByRole("link", { name: "Code reviewer" }),
+  ).toBeVisible();
+  await gallery.getByRole("link", { name: "Code reviewer" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Code reviewer", level: 1 }),
+  ).toBeVisible();
+
+  await page.getByLabel("Agent name").fill("reviewer-e2e");
+  await page.getByRole("button", { name: "Create agent" }).click();
+  await expect(page).toHaveURL(/\/agents\/reviewer-e2e$/);
+  await expect(page.getByRole("region", { name: "Template" })).toContainText(
+    "code-reviewer",
+  );
+
+  await page
+    .getByLabel("Task for the agent")
+    .fill("Review the hollis configuration");
+  await page.getByRole("button", { name: "Start run" }).click();
+  await expect(page).toHaveURL(/\/runs\/[0-9a-f-]{36}$/);
+  const output = page.getByRole("region", { name: /Output/ });
+  await expect(output).toContainText("Accepted: every reference was checked");
+  await expect(output).toContainText("code-review");
 });

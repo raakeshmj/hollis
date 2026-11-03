@@ -1513,3 +1513,117 @@ dialog .form-actions {
     transition: none !important;
   }
 }
+
+/* --- specialization: template gallery, requirement checks, run output ------------------------- */
+
+.gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
+  gap: var(--s4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.gallery-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  padding: var(--s4);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.gallery-card:focus-within,
+.gallery-card:hover {
+  border-color: var(--rule-strong);
+}
+
+.gallery-card p {
+  margin: 0;
+  color: var(--ink-2);
+}
+
+.gallery-card-head h2 {
+  margin: 0 0 2px;
+  font-size: var(--text-lg);
+}
+
+.gallery-card-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2);
+  margin-top: auto;
+  padding-top: var(--s3);
+  border-top: 1px solid var(--rule);
+}
+
+.checks {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.plain-list,
+.rule-list {
+  margin: 0;
+  padding-left: 1.2em;
+}
+
+.rule-list li + li,
+.plain-list li + li {
+  margin-top: 4px;
+}
+
+.prose-block {
+  white-space: pre-wrap;
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+}
+
+.output-panel {
+  margin-bottom: var(--s6);
+  padding: var(--s4);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--rule-strong);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  background: var(--surface);
+}
+
+.output-panel.accepted {
+  border-left-color: var(--success);
+}
+
+.output-panel.rejected {
+  border-left-color: var(--danger);
+}
+
+.output-panel .code-block {
+  max-height: 420px;
+  overflow: auto;
+  margin-bottom: var(--s2);
+}
+
+.output-status {
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.output-status.accepted {
+  color: var(--success);
+}
+
+.output-status.rejected {
+  color: var(--danger);
+}
+
+.output-status.missing {
+  color: var(--ink-3);
+}

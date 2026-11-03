@@ -7,6 +7,13 @@ import { api, seg, segs } from "./client";
 import type {
   Agent,
   Approval,
+  ContractView,
+  PolicyOverlayRule,
+  SkillsView,
+  TemplateDetail,
+  TemplateExport,
+  TemplateView,
+  UpgradePreview,
   ArtifactView,
   CollectionView,
   CreatedToken,
@@ -45,6 +52,11 @@ export const keys = {
   approvals: ["approvals"] as const,
   agents: ["agents"] as const,
   agent: (name: string) => ["agent", name] as const,
+  templates: ["templates"] as const,
+  template: (id: string) => ["template", id] as const,
+  contracts: ["contracts"] as const,
+  skills: ["skills"] as const,
+  upgrade: (name: string) => ["upgrade", name] as const,
   deployments: ["deployments"] as const,
   tools: ["tools"] as const,
   activity: ["activity"] as const,
@@ -263,6 +275,10 @@ export type AgentDraft = {
   delegates: string[];
   /** Narrows the workspace's delegation limits (unset fields inherit); null keeps them. */
   delegation: DelegationOverrides | null;
+  /** Overlay rules: they only make the workspace policy stricter for this agent's runs. */
+  policy: PolicyOverlayRule[];
+  contract: string | null;
+  skills: string[];
 };
 
 export function useSaveAgent() {
@@ -270,7 +286,7 @@ export function useSaveAgent() {
   return useMutation({
     mutationFn: ({ draft, existing }: { draft: AgentDraft; existing: boolean }) =>
       existing ? api.put<Agent>(`/v1/agents/${seg(draft.name)}`, draft) : api.post<Agent>("/v1/agents", draft),
-    onSuccess: (agent) => invalidate(keys.agents, keys.agent(agent.name)),
+    onSuccess: (agent) => invalidate(keys.agents, keys.agent(agent.name), keys.upgrade(agent.name), keys.templates),
   });
 }
 
@@ -279,6 +295,61 @@ export function useDeleteAgent() {
   return useMutation({
     mutationFn: (name: string) => api.delete(`/v1/agents/${seg(name)}`),
     onSuccess: () => invalidate(keys.agents),
+  });
+}
+
+// --- specialization ----------------------------------------------------------------------------------
+
+export const useTemplates = () =>
+  useQuery({ queryKey: keys.templates, queryFn: () => api.get<TemplateView[]>("/v1/templates") });
+
+export const useTemplate = (id: string) =>
+  useQuery({ queryKey: keys.template(id), queryFn: () => api.get<TemplateDetail>(`/v1/templates/${seg(id)}`) });
+
+export const useContracts = () =>
+  useQuery({ queryKey: keys.contracts, queryFn: () => api.get<ContractView[]>("/v1/contracts") });
+
+export const useSkills = () => useQuery({ queryKey: keys.skills, queryFn: () => api.get<SkillsView>("/v1/skills") });
+
+export type FromTemplate = {
+  template: string;
+  name: string;
+  model: string;
+  parameters: Record<string, string>;
+  overrides: {
+    knowledge?: { collections: string[]; labels: string[] };
+    delegates?: string[];
+  };
+};
+
+export function useCreateFromTemplate() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: (spec: FromTemplate) => api.post<Agent>("/v1/agents/from-template", spec),
+    onSuccess: () => invalidate(keys.agents, keys.templates),
+  });
+}
+
+export const useUpgradePreview = (name: string, enabled: boolean) =>
+  useQuery({
+    queryKey: keys.upgrade(name),
+    queryFn: () => api.get<UpgradePreview>(`/v1/agents/${seg(name)}/upgrade`),
+    enabled,
+  });
+
+export function useUpgradeAgent() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: ({ name, digest, reset }: { name: string; digest: string; reset: string[] }) =>
+      api.post<Agent>(`/v1/agents/${seg(name)}/upgrade`, { digest, reset }),
+    onSuccess: (agent) => invalidate(keys.agents, keys.agent(agent.name), keys.upgrade(agent.name), keys.templates),
+  });
+}
+
+export function useExportAgent() {
+  return useMutation({
+    mutationFn: ({ name, id }: { name: string; id?: string }) =>
+      api.post<TemplateExport>(`/v1/agents/${seg(name)}/export`, id ? { id } : {}),
   });
 }
 
