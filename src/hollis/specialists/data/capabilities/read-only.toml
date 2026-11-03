@@ -1,0 +1,13 @@
+id = "read-only"
+version = "1.0.0"
+name = "Read-only"
+description = "Can look but not change anything: every tool call that could change something is denied for this agent and any agent it delegates to."
+guidance = """
+You cannot change anything: tools that could change files or other systems are denied. Report what you find; do not ask for changes to be made.
+"""
+
+[[policy]]
+decision = "deny"
+effects = ["mutating", "destructive"]
+name = "read-only"
+reason = "this agent is read-only"

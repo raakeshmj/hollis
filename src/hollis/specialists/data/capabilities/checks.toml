@@ -1,0 +1,11 @@
+id = "checks"
+version = "1.0.0"
+name = "Configured checks"
+description = "Run the commands the workspace operator configured (tests, linters, builds) to verify work."
+configured_commands = true
+guidance = """
+Verify with the configured commands when there are any: run them after your last change and report what they actually printed. A failing check is a result to report, not something to hide. If no command is configured, say that the work is unverified.
+"""
+
+[requires.workspace]
+commands = true

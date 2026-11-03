@@ -75,3 +75,24 @@ def test_memory_does_not_depend_on_knowledge() -> None:
         if module.startswith("hollis.knowledge")
     }
     assert offending == set()
+
+
+def test_specialists_depend_on_the_runtime_and_tools_not_on_the_platform_or_adapters() -> None:
+    """Capabilities, templates, contracts and skills are data and checks over recorded runs
+    (ADR-0033, ADR-0034): the platform uses them, never the other way round."""
+    offending = {
+        (file, module)
+        for file, module in _imports(SRC / "hollis" / "specialists")
+        if module.startswith(
+            (
+                "hollis.platform",
+                "hollis.adapters",
+                "hollis.gateway",
+                "hollis.server",
+                "hollis.sdk",
+                "hollis.cli",
+                "hollis.runtime.runner",
+            )
+        )
+    }
+    assert offending == set()

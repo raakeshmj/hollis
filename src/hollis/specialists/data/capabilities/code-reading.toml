@@ -1,0 +1,13 @@
+id = "code-reading"
+version = "1.0.0"
+name = "Code reading"
+description = "Search code, outline files and read numbered line ranges; see the working diff when git tools are configured."
+tools = ["code_search", "code_outline", "code_read"]
+optional_tools = ["git_status", "git_diff", "git_log"]
+guidance = """
+Search before reading: `code_search` answers `path:line: text`, and `code_outline` gives a file's structure with line numbers. Then read only the ranges you need with `code_read`. Refer to code as `path:line`, using the numbers the tools showed you. When git tools are available, `git_diff` shows what is not yet committed.
+"""
+
+[requires.workspace]
+filesystem = true
+git = true

@@ -1,0 +1,11 @@
+id = "data-analysis"
+version = "1.0.0"
+name = "Data analysis"
+description = "Find, describe and query tabular files (CSV, TSV, JSON, JSON Lines) with exact, read-only SQL."
+tools = ["data_list", "data_describe", "data_query"]
+guidance = """
+Find the files with `data_list` and look at each table with `data_describe` before querying it. Compute every number with `data_query` (SQLite dialect, one SELECT); never estimate one by reading rows. Each result has a `query_id`: report every number with the query_id it came from. Note nulls, duplicates and anything else that limits the answer.
+"""
+
+[requires.workspace]
+filesystem = true

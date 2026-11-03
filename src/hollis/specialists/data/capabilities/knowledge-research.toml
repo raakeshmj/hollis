@@ -1,0 +1,11 @@
+id = "knowledge-research"
+version = "1.0.0"
+name = "Knowledge research"
+description = "Search and read the workspace's knowledge collections, citing passages by handle."
+tools = ["knowledge_search", "knowledge_read", "knowledge_list", "knowledge_outline"]
+guidance = """
+Search the collections with several phrasings before concluding that something is not there. Read the surrounding section when a passage is ambiguous. Every claim cites the handles of the passages that support it, exactly as the tools gave them. When sources disagree, keep the disagreement and cite both sides; do not pick one silently. Say what the sources do not answer.
+"""
+
+[requires.workspace]
+collections = true

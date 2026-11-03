@@ -1,0 +1,12 @@
+id = "code-editing"
+version = "1.0.0"
+name = "Code editing"
+description = "Change files with all-or-nothing unified-diff patches (each needs approval under the default policy)."
+tools = ["apply_patch"]
+guidance = """
+Change files only with `apply_patch`: a unified diff with two or three unchanged lines of context around each change, so it applies exactly where you mean. A patch applies completely or not at all; if it is refused, read the current lines again and send a corrected patch. Keep each patch to one concern. Never claim a change you did not apply.
+"""
+
+[requires.workspace]
+filesystem = true
+writable = true

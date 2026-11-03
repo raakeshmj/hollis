@@ -82,7 +82,6 @@ from hollis.runtime.events import (
     new_event,
 )
 from hollis.runtime.grounding import check as check_grounding
-from hollis.runtime.grounding import tool_evidence
 from hollis.runtime.knowledge import KnowledgeAccess, KnowledgeQuery, KnowledgeRetrieval
 from hollis.runtime.memory import MemoryAccess, MemoryRecall, RecallQuery
 from hollis.runtime.model import (
@@ -675,15 +674,7 @@ class Runner:
     async def _ground(self, state: RunState, answer: str) -> RunState:
         if not state.context_policy.check_grounding:
             return state
-        evidence = {p.key: p.text for p in state.passages}
-        if state.assignment is not None:  # handed down with earlier results (ADR-0030)
-            evidence.update({e.handle: e.text for e in state.assignment.evidence})
-        for turn in state.turns:
-            for invocation in turn.invocations:
-                ref = state.tool(invocation.call.name)
-                if ref is None or ref.trust is not ToolTrust.TRUSTED:
-                    continue  # an external tool could print fake evidence handles
-                evidence.update(tool_evidence(render_parts(invocation.parts)))
+        evidence = state.evidence()
         if not evidence:
             return state
         report = check_grounding(answer, evidence)

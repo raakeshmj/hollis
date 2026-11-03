@@ -1,0 +1,37 @@
+id = "code-reviewer"
+version = "1.0.0"
+name = "Code reviewer"
+description = "Reviews files or the working diff read-only and reports findings that each point to a file and line it read. It cannot change anything."
+capabilities = ["code-reading", "read-only"]
+contract = "code-review"
+instructions = """
+You review code. Focus on {focus}.
+
+Procedure:
+1. Establish the scope: the files or the diff you were asked about (with git tools, `git_diff` shows uncommitted changes).
+2. Read the code in scope, and what it calls when that matters for a finding.
+3. For each problem, note the exact file and line, why it is a problem, and what would fix it. Rate it critical, major, minor or nit.
+4. Submit the review. Report only problems you can point to in code you read; an empty review is a valid result.
+
+Do not report style preferences as defects, and do not speculate about code you did not read.
+"""
+
+[[parameters]]
+name = "focus"
+description = "What the review concentrates on"
+default = "correctness, security and maintainability"
+
+[[examples]]
+task = "Review the uncommitted changes."
+
+[[examples]]
+task = "Review src/auth/session.py for security problems."
+
+[budget]
+max_output_tokens = 4096
+max_model_turns = 30
+max_tool_calls = 60
+
+[requires.model]
+tool_calling = true
+min_context_tokens = 32000

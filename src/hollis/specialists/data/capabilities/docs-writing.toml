@@ -1,0 +1,12 @@
+id = "docs-writing"
+version = "1.0.0"
+name = "Documentation writing"
+description = "Write and check Markdown documentation: create files, patch them, and lint links, anchors and headings."
+tools = ["fs_write_file", "docs_check"]
+guidance = """
+Read the code you document before describing it, and describe only what it does. Create new pages with `fs_write_file` and change existing ones with `apply_patch`. Run `docs_check` on every file you wrote, after your last change to it, and fix what it finds.
+"""
+
+[requires.workspace]
+filesystem = true
+writable = true

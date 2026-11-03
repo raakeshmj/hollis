@@ -47,16 +47,18 @@ from hollis.runtime.events import (
     ToolOutcome,
     ToolResultRecorded,
 )
-from hollis.runtime.grounding import GroundingReport
+from hollis.runtime.grounding import GroundingReport, tool_evidence
 from hollis.runtime.knowledge import KnowledgeAccess, RetrievedPassage
 from hollis.runtime.memory import MemoryAccess, RecalledMemory
 from hollis.runtime.model import CallOutcome, DeploymentRef, FailureKind, ModelResponse
 from hollis.runtime.policy import AmbiguousOutcomePolicy, RunBudget
+from hollis.runtime.results import render_parts
 from hollis.runtime.tools import (
     Decision,
     PolicyOverlayRule,
     ResultPart,
     ToolRef,
+    ToolTrust,
     approval_binding,
     invocation_id_for,
 )
@@ -286,6 +288,21 @@ class RunState(_Frozen):
 
     def tool(self, name: str) -> ToolRef | None:
         return next((t for t in self.tools if t.name == name), None)
+
+    def evidence(self) -> dict[str, str]:
+        """Evidence the run received, by handle: knowledge passages retrieved at start, evidence
+        handed down with its assignment (ADR-0030), and evidence blocks in the results of
+        trusted tools (an external tool could print fake handles)."""
+        evidence = {p.key: p.text for p in self.passages}
+        if self.assignment is not None:
+            evidence.update({e.handle: e.text for e in self.assignment.evidence})
+        for turn in self.turns:
+            for invocation in turn.invocations:
+                ref = self.tool(invocation.call.name)
+                if ref is None or ref.trust is not ToolTrust.TRUSTED:
+                    continue
+                evidence.update(tool_evidence(render_parts(invocation.parts)))
+        return evidence
 
     @property
     def pending_invocations(self) -> tuple[Invocation, ...]:
