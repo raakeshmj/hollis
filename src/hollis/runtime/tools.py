@@ -170,6 +170,9 @@ class ToolContext(_Frozen):
     """Memory namespaces granted to the run (from RunCreated), for memory tools."""
     knowledge: KnowledgeAccess | None = None
     """Knowledge collections and labels granted to the run, for knowledge tools."""
+    arguments: dict[str, JsonValue] | None = None
+    """The invocation's validated arguments (what `reconcile` needs to check an earlier
+    attempt)."""
 
 
 @runtime_checkable

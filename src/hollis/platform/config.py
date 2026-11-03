@@ -84,11 +84,48 @@ class FilesystemTools(_Model):
     writable: bool = False
 
 
+class CommandParameter(_Model):
+    description: str = Field(default="", max_length=300)
+    default: str | None = None
+    """None: the model must give a value."""
+    pattern: str | None = Field(default=None, max_length=300)
+    """A regular expression the whole value must match."""
+
+
+class CommandConfig(_Model):
+    """A fixed command an agent may run (ADR-0016): `argv[0]` is an absolute path, `{name}`
+    elements are filled with parameter values as whole arguments, and no shell is involved.
+    The process runs as the Hollis user with its access. It is not a sandbox."""
+
+    name: str = Field(pattern=r"^[a-z][a-z0-9_]{0,40}$")
+    description: str = Field(min_length=1, max_length=500)
+    argv: tuple[str, ...] = Field(min_length=1, max_length=64)
+    parameters: dict[str, CommandParameter] = Field(default_factory=dict[str, CommandParameter])
+    effect: ToolEffect = ToolEffect.MUTATING
+    """What the command can do; the default assumes it changes things (approval required)."""
+    idempotent: bool = False
+    timeout_s: float = Field(default=60.0, gt=0, le=3600)
+    cwd: str = "."
+    """Relative to the workspace directory."""
+    env: dict[str, str] = Field(default_factory=dict[str, str])
+    """Environment variables set for the command (PATH and LANG default to safe values)."""
+    inherit_env: tuple[str, ...] = ()
+    """Names of variables copied from Hollis's own environment."""
+
+
+class GitToolsConfig(_Model):
+    binary: str = "/usr/bin/git"
+    """Absolute path of the git executable."""
+
+
 class ToolsConfig(_Model):
     filesystem: FilesystemTools | None = None
     mcp: tuple[McpServerConfig, ...] = ()
     memory_forget: bool = False
     """Offer the destructive memory_forget tool to agents."""
+    commands: tuple[CommandConfig, ...] = ()
+    git: GitToolsConfig | None = None
+    """Read-only git tools for the filesystem root (requires [tools.filesystem])."""
 
 
 class PolicyRuleConfig(_Model):

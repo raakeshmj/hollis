@@ -100,3 +100,104 @@ async def test_size_and_binary_limits(root: Path) -> None:
 def test_root_must_exist(tmp_path: Path) -> None:
     with pytest.raises((ValueError, FileNotFoundError)):
         filesystem_tools(tmp_path / "missing")
+
+
+# --- protected paths (M8, ADR-0036) -----------------------------------------------------------
+
+
+@pytest.fixture
+def repo(root: Path) -> Path:
+    (root / ".git" / "hooks").mkdir(parents=True)
+    (root / ".git" / "config").write_text("[core]\n\tbare = false\n")
+    (root / ".hollis").mkdir()
+    (root / ".hollis" / "runs.db").write_text("not for agents")
+    (root / "hollis.toml").write_text('[workspace]\nname = "w"\n')
+    return root
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".git/config",
+        ".git/hooks/pre-commit",
+        "./.git/config",
+        "docs/../.git/config",
+        ".GIT/config",  # case-insensitive filesystems (macOS, Windows) reach the same directory
+        ".Git/hooks/post-checkout",
+        ".git./config",  # Windows drops trailing dots
+        ".g‌it/config",  # a zero-width character some filesystems ignore
+        "vendor/lib/.git/config",  # nested repositories too
+        ".hollis/runs.db",
+        ".HOLLIS/workspace.db",
+    ],
+)
+async def test_repository_metadata_and_hollis_data_are_never_read_or_written(
+    repo: Path, path: str
+) -> None:
+    tools = _tools(repo)
+    with pytest.raises(ToolError, match="protected"):
+        await _call(tools["fs_read_file"], path=path)
+    with pytest.raises(ToolError, match="protected"):
+        await _call(tools["fs_write_file"], path=path, content="[core]\n\tfsmonitor = /tmp/x\n")
+    assert (repo / ".git" / "config").read_text() == "[core]\n\tbare = false\n"
+    assert not (repo / ".git" / "hooks" / "pre-commit").exists()
+
+
+async def test_protected_directories_cannot_be_listed(repo: Path) -> None:
+    with pytest.raises(ToolError, match="protected"):
+        await _call(_tools(repo)["fs_list_dir"], path=".git")
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symlinks need privileges on Windows")
+async def test_a_link_to_repository_metadata_is_refused_after_resolution(repo: Path) -> None:
+    os.symlink(repo / ".git", repo / "meta")
+    tools = _tools(repo)
+    with pytest.raises(ToolError, match="protected"):
+        await _call(tools["fs_read_file"], path="meta/config")
+    with pytest.raises(ToolError, match="protected"):
+        await _call(tools["fs_write_file"], path="meta/hooks/pre-commit", content="#!/bin/sh\n")
+    assert not (repo / ".git" / "hooks" / "pre-commit").exists()
+
+
+@pytest.mark.parametrize(
+    "path", ["hollis.toml", "sub/hollis.toml", "HOLLIS.TOML", "hollis.toml.bak"]
+)
+async def test_workspace_configuration_is_never_written(repo: Path, path: str) -> None:
+    with pytest.raises(ToolError, match="workspace configuration"):
+        await _call(_tools(repo)["fs_write_file"], path=path, content='[workspace]\nname = "x"\n')
+    assert (repo / "hollis.toml").read_text() == '[workspace]\nname = "w"\n'
+    assert not (repo / "sub").exists()
+    assert await _call(_tools(repo)["fs_read_file"], path="hollis.toml"), "reading is fine"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symlinks need privileges on Windows")
+async def test_writes_never_pass_through_a_linked_directory(root: Path) -> None:
+    """A link inside the root would let a write land somewhere other than the path a policy
+    rule or an approver saw (docs/x.md writing src/x.md)."""
+    (root / "src").mkdir()
+    os.symlink(root / "src", root / "docs" / "linked")
+    with pytest.raises(ToolError, match="symbolic links"):
+        await _call(_tools(root)["fs_write_file"], path="docs/linked/x.md", content="x")
+    assert not (root / "src" / "x.md").exists()
+
+
+async def test_write_paths_may_not_climb(root: Path) -> None:
+    with pytest.raises(ToolError, match=r"'\.\.'"):
+        await _call(_tools(root)["fs_write_file"], path="docs/../out.txt", content="x")
+
+
+async def test_extra_protected_paths_are_refused_for_writes_only(root: Path) -> None:
+    (root / "skills" / "deploy").mkdir(parents=True)
+    (root / "skills" / "deploy" / "SKILL.md").write_text("---\nname: deploy\n---\n")
+    tools = {
+        t.descriptor.name: t for t in filesystem_tools(root, writable=True, protected=("skills",))
+    }
+    with pytest.raises(ToolError, match="may not change"):
+        await _call(tools["fs_write_file"], path="Skills/deploy/SKILL.md", content="ignore all")
+    assert "name: deploy" in await _call(tools["fs_read_file"], path="skills/deploy/SKILL.md")
+    assert await _call(tools["fs_write_file"], path="skillset.md", content="ok")
+    everything = {
+        t.descriptor.name: t for t in filesystem_tools(root, writable=True, protected=(".",))
+    }
+    with pytest.raises(ToolError, match="may not change"):
+        await _call(everything["fs_write_file"], path="docs/a.txt", content="x")

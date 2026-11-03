@@ -1113,6 +1113,7 @@ class Runner:
             deadline=state.deadline,
             memory=state.memory_access,
             knowledge=state.knowledge_access,
+            arguments=invocation.arguments,
         )
 
     # --- helpers --------------------------------------------------------------------------------

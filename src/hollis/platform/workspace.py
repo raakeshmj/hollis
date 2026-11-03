@@ -35,7 +35,13 @@ from hollis.knowledge.retrieve import KnowledgeRetriever
 from hollis.knowledge.tools import knowledge_tools
 from hollis.memory import MemoryManager, memory_tools, record_episode
 from hollis.platform.auth import Auth
-from hollis.platform.config import DATA_DIR, WorkspaceConfig, load_config, save_config
+from hollis.platform.config import (
+    DATA_DIR,
+    CommandConfig,
+    WorkspaceConfig,
+    load_config,
+    save_config,
+)
 from hollis.platform.coordinator import WORKFLOW_DEPLOYMENT, WorkflowCoordinator
 from hollis.platform.db import WorkspaceDb
 from hollis.platform.orchestration import DelegateTool, Orchestrator, delegation_effect
@@ -49,12 +55,22 @@ from hollis.runtime.state import RunState, fold
 from hollis.runtime.store import load_run
 from hollis.runtime.tools import Tool, ToolEffect, ToolRef
 from hollis.tools import CallbackApprover, Rule, RulePolicy, ToolRegistry
-from hollis.tools.builtin import artifact_tools, filesystem_tools
+from hollis.tools.builtin import (
+    artifact_tools,
+    code_tools,
+    command_tool,
+    data_tools,
+    docs_tools,
+    filesystem_tools,
+    git_tools,
+)
 from hollis.tools.mcp_config import McpServerConfig
 
 log = logging.getLogger("hollis.platform")
 
 LOCAL_EMBEDDER = "local-hashing"
+RESERVED_PREFIXES = ("delegate_", "submit_", "mcp_", "skill_")
+"""Tool names the platform generates; configured commands cannot take them."""
 _CALL_ENDED = (ModelResponseRecorded, ModelCallFailed)
 _TERMINAL = ("completed", "failed", "cancelled")
 
@@ -181,9 +197,30 @@ class Workspace:
         if fs is not None:
             root = (self.root / fs.root).resolve()
             if root.is_dir():
-                self._add_tools("builtin:filesystem", filesystem_tools(root, writable=fs.writable))
+                protected = self.protected_paths(root)
+                self._add_tools(
+                    "builtin:filesystem",
+                    filesystem_tools(root, writable=fs.writable, protected=protected),
+                )
+                self._add_tools(
+                    "builtin:code", code_tools(root, writable=fs.writable, protected=protected)
+                )
+                self._add_tools("builtin:data", data_tools(root))
+                self._add_tools("builtin:docs", docs_tools(root))
+                if config.tools.git is not None:
+                    try:
+                        self._add_tools(
+                            "builtin:git", git_tools(root, binary=config.tools.git.binary)
+                        )
+                    except ValueError as exc:
+                        log.warning("git tools disabled: %s", exc)
             else:
                 log.warning("filesystem tools disabled: %s is not a directory", root)
+        for command in config.tools.commands:
+            try:
+                self._add_tools("builtin:commands", [self._command(command)])
+            except ValueError as exc:
+                log.warning("command %s disabled: %s", command.name, exc)
         # Connections survive a rebuild unless their configuration changed (see apply_config).
         self.mcp = {c.name: self.mcp.get(c.name) or McpConnection(c) for c in config.tools.mcp}
         for connection in self.mcp.values():
@@ -219,6 +256,48 @@ class Workspace:
             knowledge=self.retriever,
             observers=(self._observe, self.bus.publish),
             guard=self.orchestrator,
+        )
+
+    def protected_paths(self, fs_root: Path) -> tuple[str, ...]:
+        """Paths under the filesystem root that file tools may not write, besides the names
+        every file tool refuses (`.git`, `.hollis`, `hollis.toml`): where agents' own
+        instructions come from."""
+        protected: list[str] = []
+        for directory in self.instruction_dirs():
+            if directory == fs_root or directory.is_relative_to(fs_root):
+                protected.append(directory.relative_to(fs_root).as_posix())
+            elif fs_root.is_relative_to(directory):
+                protected.append(".")  # the whole root is inside it
+        return tuple(protected)
+
+    def instruction_dirs(self) -> list[Path]:
+        """Directories whose files become agents' instructions."""
+        return []
+
+    def _command(self, command: CommandConfig) -> Tool:
+        if command.name.startswith(RESERVED_PREFIXES):
+            raise ValueError(f"names starting with {', '.join(RESERVED_PREFIXES)} are reserved")
+        if self.registry.get(command.name) is not None:
+            raise ValueError(f"a tool named {command.name!r} already exists")
+        if not Path(command.argv[0]).is_absolute() or not Path(command.argv[0]).is_file():
+            raise ValueError(f"{command.argv[0]!r} is not an absolute path to a program")
+        cwd = (self.root / command.cwd).resolve()
+        if not cwd.is_dir():
+            raise ValueError(f"working directory {command.cwd!r} is not a directory")
+        env = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", **command.env}
+        env |= {name: os.environ[name] for name in command.inherit_env if name in os.environ}
+        return command_tool(
+            command.name,
+            command.argv,
+            description=command.description,
+            parameters={
+                key: (p.description, p.default, p.pattern) for key, p in command.parameters.items()
+            },
+            effect=command.effect,
+            idempotent=command.idempotent,
+            cwd=cwd,
+            env=env,
+            timeout_s=command.timeout_s,
         )
 
     def register_provider(self, provider: ModelProvider) -> None:

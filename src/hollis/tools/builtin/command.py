@@ -180,3 +180,43 @@ def _kill_group(process: asyncio.subprocess.Process) -> None:
             process.kill()
         else:
             os.killpg(process.pid, signal.SIGKILL)
+
+
+def command_tool(
+    name: str,
+    argv: Sequence[str],
+    *,
+    description: str,
+    parameters: Mapping[str, tuple[str, str | None, str | None]],
+    effect: ToolEffect,
+    idempotent: bool | None = None,
+    cwd: str | os.PathLike[str] | None = None,
+    env: Mapping[str, str] | None = None,
+    timeout_s: float = 30.0,
+) -> CommandTool:
+    """A CommandTool from plain data (for configured commands): `parameters` maps each name to
+    (description, default or None when required, regular expression the whole value must
+    match). Patterns are anchored here: a pattern alone would match anywhere in the value."""
+    from pydantic import ConfigDict, Field, create_model
+
+    fields: dict[str, Any] = {}
+    for key, (about, default, pattern) in parameters.items():
+        constraint = Field(
+            default=... if default is None else default,
+            description=about or None,
+            pattern=None if pattern is None else f"^(?:{pattern})$",
+            max_length=1000,
+        )
+        fields[key] = (str, constraint)
+    model = create_model(f"{name}_parameters", __config__=ConfigDict(extra="forbid"), **fields)
+    return CommandTool(
+        name,
+        argv,
+        description=description,
+        parameters=model,
+        effect=effect,
+        idempotent=idempotent,
+        cwd=cwd,
+        env=env,
+        timeout_s=timeout_s,
+    )
