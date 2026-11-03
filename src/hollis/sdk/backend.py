@@ -19,13 +19,17 @@ from hollis.platform.schemas import (
     ApprovalDecisionInput,
     ArtifactView,
     CancelInput,
+    CapabilityView,
     CollectionInput,
     CollectionView,
+    ContractView,
     CreatedToken,
     DeploymentInput,
     DeploymentView,
     EventView,
+    ExportInput,
     ForgetInput,
+    FromTemplateInput,
     Health,
     IngestResultView,
     MaintenanceView,
@@ -44,15 +48,21 @@ from hollis.platform.schemas import (
     SearchInput,
     SearchResultView,
     SettingsView,
+    SkillsView,
     SourceDetail,
     SourceView,
     StartRun,
     SyncInput,
     SyncResultView,
+    TemplateDetail,
+    TemplateExport,
+    TemplateView,
     TokenInput,
     TokenView,
     ToolActivity,
     ToolView,
+    UpgradeInput,
+    UpgradePreview,
     WriteResultView,
 )
 from hollis.platform.services import Platform
@@ -97,6 +107,17 @@ class Backend(Protocol):
     async def create_agent(self, spec: AgentInput) -> Agent: ...
     async def update_agent(self, name: str, spec: AgentInput) -> Agent: ...
     async def delete_agent(self, name: str) -> None: ...
+    async def create_agent_from_template(self, spec: FromTemplateInput) -> Agent: ...
+    async def upgrade_preview(self, name: str) -> UpgradePreview: ...
+    async def upgrade_agent(self, name: str, spec: UpgradeInput) -> Agent: ...
+    async def export_agent(self, name: str, spec: ExportInput) -> TemplateExport: ...
+
+    # specialization
+    async def templates(self) -> list[TemplateView]: ...
+    async def template(self, template_id: str) -> TemplateDetail: ...
+    async def capabilities(self) -> list[CapabilityView]: ...
+    async def contracts(self) -> list[ContractView]: ...
+    async def skills(self) -> SkillsView: ...
     async def create_starter(self) -> Agent: ...
     async def login_token(self) -> str: ...
 
@@ -254,6 +275,33 @@ class LocalBackend:
 
     async def delete_agent(self, name: str) -> None:
         await self.platform.delete_agent(self._me, name)
+
+    async def create_agent_from_template(self, spec: FromTemplateInput) -> Agent:
+        return await self.platform.create_agent_from_template(self._me, spec)
+
+    async def upgrade_preview(self, name: str) -> UpgradePreview:
+        return await self.platform.upgrade_preview(self._me, name)
+
+    async def upgrade_agent(self, name: str, spec: UpgradeInput) -> Agent:
+        return await self.platform.upgrade_agent(self._me, name, spec)
+
+    async def export_agent(self, name: str, spec: ExportInput) -> TemplateExport:
+        return await self.platform.export_agent(self._me, name, spec)
+
+    async def templates(self) -> list[TemplateView]:
+        return await self.platform.templates(self._me)
+
+    async def template(self, template_id: str) -> TemplateDetail:
+        return await self.platform.template(self._me, template_id)
+
+    async def capabilities(self) -> list[CapabilityView]:
+        return await self.platform.capabilities(self._me)
+
+    async def contracts(self) -> list[ContractView]:
+        return await self.platform.contracts(self._me)
+
+    async def skills(self) -> SkillsView:
+        return await self.platform.skills(self._me)
 
     async def create_starter(self) -> Agent:
         return await self.platform.create_starter(self._me)

@@ -24,13 +24,17 @@ from hollis.platform.schemas import (
     ApprovalDecisionInput,
     ArtifactView,
     CancelInput,
+    CapabilityView,
     CollectionInput,
     CollectionView,
+    ContractView,
     CreatedToken,
     DeploymentInput,
     DeploymentView,
     EventView,
+    ExportInput,
     ForgetInput,
+    FromTemplateInput,
     Health,
     IngestResultView,
     MaintenanceView,
@@ -49,15 +53,21 @@ from hollis.platform.schemas import (
     SearchInput,
     SearchResultView,
     SettingsView,
+    SkillsView,
     SourceDetail,
     SourceView,
     StartRun,
     SyncInput,
     SyncResultView,
+    TemplateDetail,
+    TemplateExport,
+    TemplateView,
     TokenInput,
     TokenView,
     ToolActivity,
     ToolView,
+    UpgradeInput,
+    UpgradePreview,
     WriteResultView,
 )
 from hollis.runtime.knowledge import SourceTrust
@@ -78,6 +88,9 @@ _tools = TypeAdapter(list[ToolView])
 _activity = TypeAdapter(list[ToolActivity])
 _mcp = TypeAdapter(list[McpServerView])
 _agents = TypeAdapter(list[Agent])
+_templates = TypeAdapter(list[TemplateView])
+_capabilities = TypeAdapter(list[CapabilityView])
+_contracts = TypeAdapter(list[ContractView])
 _page = TypeAdapter(Page[RunSummary])
 _events = TypeAdapter(list[EventView])
 _approvals = TypeAdapter(list[Approval])
@@ -256,6 +269,47 @@ class RemoteBackend:
 
     async def delete_agent(self, name: str) -> None:
         await self._send("DELETE", f"/v1/agents/{_segment(name)}")
+
+    async def create_agent_from_template(self, spec: FromTemplateInput) -> Agent:
+        body = spec.model_dump(mode="json", exclude_unset=True)
+        body["overrides"] = spec.overrides.model_dump(mode="json", exclude_unset=True)
+        return await self._model(Agent, "POST", "/v1/agents/from-template", body=body)
+
+    async def upgrade_preview(self, name: str) -> UpgradePreview:
+        return await self._model(UpgradePreview, "GET", f"/v1/agents/{_segment(name)}/upgrade")
+
+    async def upgrade_agent(self, name: str, spec: UpgradeInput) -> Agent:
+        return await self._model(
+            Agent,
+            "POST",
+            f"/v1/agents/{_segment(name)}/upgrade",
+            body=spec.model_dump(mode="json"),
+        )
+
+    async def export_agent(self, name: str, spec: ExportInput) -> TemplateExport:
+        return await self._model(
+            TemplateExport,
+            "POST",
+            f"/v1/agents/{_segment(name)}/export",
+            body=spec.model_dump(mode="json", exclude_none=True),
+        )
+
+    # --- specialization -----------------------------------------------------------------------
+
+    async def templates(self) -> list[TemplateView]:
+        return await self._json(_templates, "GET", "/v1/templates")
+
+    async def template(self, template_id: str) -> TemplateDetail:
+        return await self._model(TemplateDetail, "GET", f"/v1/templates/{_segment(template_id)}")
+
+    async def capabilities(self) -> list[CapabilityView]:
+        return await self._json(_capabilities, "GET", "/v1/capabilities")
+
+    async def contracts(self) -> list[ContractView]:
+        return await self._json(_contracts, "GET", "/v1/contracts")
+
+    async def skills(self) -> SkillsView:
+        return await self._model(SkillsView, "GET", "/v1/skills")
 
     async def create_starter(self) -> Agent:
         return await self._model(Agent, "POST", "/v1/agents/starter")

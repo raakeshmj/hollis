@@ -25,17 +25,22 @@ from hollis.platform.errors import InvalidRequest, NotFound
 from hollis.platform.schemas import (
     Agent,
     AgentInput,
+    AgentOverrides,
     Approval,
     ApprovalDecisionInput,
     ArtifactView,
     CancelInput,
+    CapabilityView,
     CollectionInput,
     CollectionView,
+    ContractView,
     CreatedToken,
     DeploymentInput,
     DeploymentView,
     EventView,
+    ExportInput,
     ForgetInput,
+    FromTemplateInput,
     Health,
     IngestResultView,
     MaintenanceView,
@@ -43,6 +48,7 @@ from hollis.platform.schemas import (
     MemoryDetail,
     MemoryView,
     OrchestrationView,
+    OutputView,
     Page,
     Plan,
     PrincipalInput,
@@ -55,15 +61,21 @@ from hollis.platform.schemas import (
     SearchInput,
     SearchResultView,
     SettingsView,
+    SkillsView,
     SourceDetail,
     SourceView,
     StartRun,
     SyncInput,
     SyncResultView,
+    TemplateDetail,
+    TemplateExport,
+    TemplateView,
     TokenInput,
     TokenView,
     ToolActivity,
     ToolView,
+    UpgradeInput,
+    UpgradePreview,
     WriteResultView,
 )
 from hollis.runtime.knowledge import SourceTrust
@@ -161,6 +173,11 @@ class RunHandle:
         """The orchestration this run belongs to: the root and every run delegated below it."""
         return await self._backend.run_tree(self.id)
 
+    async def output(self) -> OutputView | None:
+        """The run's structured output under its agent's contract: accepted (checked against
+        the run's log), rejected or missing. None when the run has no contract."""
+        return (await self.detail()).output
+
 
 class Runs:
     def __init__(self, backend: Backend) -> None:
@@ -252,6 +269,74 @@ class Agents:
     async def starter(self) -> Agent:
         """Create the starter `docs` collection and default agent (admin; idempotent)."""
         return await self._backend.create_starter()
+
+    async def create_from_template(
+        self,
+        template: str,
+        name: str,
+        model: str,
+        *,
+        parameters: Mapping[str, str] | None = None,
+        **overrides: Any,
+    ) -> Agent:
+        """An ordinary agent made from a template (admin). Keyword fields override the
+        template's (instructions, tools, policy...) or set the agent's own (knowledge, memory,
+        delegates...)."""
+        spec = FromTemplateInput(
+            template=template,
+            name=name,
+            model=model,
+            parameters=dict(parameters or {}),
+            overrides=AgentOverrides.model_validate(overrides),
+        )
+        return await self._backend.create_agent_from_template(spec)
+
+    async def customize(self, name: str, **fields: Any) -> Agent:
+        """Change some fields. For an agent made from a template, every template field changed
+        is marked customized, so upgrades keep it."""
+        return await self.update(name, **fields)
+
+    async def upgrade_preview(self, name: str) -> UpgradePreview:
+        """What upgrading to the template's current version would change, and what it keeps."""
+        return await self._backend.upgrade_preview(name)
+
+    async def upgrade(
+        self, name: str, *, digest: str | None = None, reset: tuple[str, ...] = ()
+    ) -> Agent:
+        """Upgrade to the template version a preview showed (`digest`; refused if the template
+        changed since). Without a digest, previews now and applies that. `reset` takes those
+        customized fields from the template again."""
+        if digest is None:
+            digest = (await self.upgrade_preview(name)).to_digest
+        return await self._backend.upgrade_agent(name, UpgradeInput(digest=digest, reset=reset))
+
+    async def export_template(
+        self, name: str, *, id: str | None = None, version: str = "1.0.0"
+    ) -> TemplateExport:
+        """The agent as a template file (TOML) to share by copying."""
+        return await self._backend.export_agent(name, ExportInput(id=id, version=version))
+
+
+class Templates:
+    """Agent templates and what they are made of: capabilities, output contracts, skills."""
+
+    def __init__(self, backend: Backend) -> None:
+        self._backend = backend
+
+    async def list(self) -> builtins.list[TemplateView]:
+        return await self._backend.templates()
+
+    async def get(self, template_id: str) -> TemplateDetail:
+        return await self._backend.template(template_id)
+
+    async def capabilities(self) -> builtins.list[CapabilityView]:
+        return await self._backend.capabilities()
+
+    async def contracts(self) -> builtins.list[ContractView]:
+        return await self._backend.contracts()
+
+    async def skills(self) -> SkillsView:
+        return await self._backend.skills()
 
 
 class Models:
@@ -471,6 +556,7 @@ class AsyncHollis:
         self.runs = Runs(backend)
         self.approvals = Approvals(backend)
         self.agents = Agents(backend)
+        self.templates = Templates(backend)
         self.models = Models(backend)
         self.tools = Tools(backend)
         self.knowledge = Knowledge(backend)

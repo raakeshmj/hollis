@@ -19,6 +19,7 @@ from hollis.platform.schemas import (
     Approval,
     EventView,
     OrchestrationView,
+    OutputView,
     Plan,
     RunDetail,
     RunPhase,
@@ -343,6 +344,7 @@ def run_command(
                 "dim",
             )
         )
+    render_output(console, detail.output)
     if detail.answer:
         console.print()
         console.print(detail.answer)
@@ -519,9 +521,35 @@ def show_detail(console: Console, detail: RunDetail) -> None:
                 "dim",
             )
         )
+    render_output(console, detail.output)
     if detail.answer:
         console.print()
         console.print(detail.answer)
+
+
+def render_output(console: Console, output: OutputView | None) -> None:
+    """A run's structured output under its contract, and whether Hollis's checks accepted it."""
+    if output is None:
+        return
+    console.print()
+    if output.status == "accepted":
+        console.print(
+            console.style(f"  output ({output.contract}): accepted", "green")
+            + console.style(" (checked against this run's log)", "dim")
+        )
+        text = json.dumps(output.data, indent=2, ensure_ascii=False)
+        for line in text.splitlines()[:60]:
+            console.print(f"    {line}")
+    elif output.status == "rejected":
+        console.print(
+            console.style(
+                f"  output ({output.contract}): rejected after {output.attempts} attempts", "red"
+            )
+        )
+        for problem in output.problems[:10]:
+            console.print(console.style(f"    - {problem}", "dim"))
+    else:
+        console.print(console.style(f"  output ({output.contract}): none submitted", "dim"))
 
 
 @runs.command("tree")

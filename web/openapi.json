@@ -361,6 +361,158 @@
         "title": "AgentOrigin",
         "type": "object"
       },
+      "AgentOverrides": {
+        "additionalProperties": false,
+        "description": "Agent fields to set instead of the template's (or besides it, for fields a template\nnever sets). Unset fields are not overridden.",
+        "properties": {
+          "budget": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunBudget"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "context": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ContextPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "delegates": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 16,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delegates"
+          },
+          "delegation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DelegationOverrides"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "instructions": {
+            "anyOf": [
+              {
+                "maxLength": 50000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Instructions"
+          },
+          "knowledge": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/KnowledgeAccess"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "memory": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MemoryAccess"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "policy": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/PolicyOverlayRule"
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Policy"
+          },
+          "record_episodes": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Record Episodes"
+          },
+          "skills": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skills"
+          },
+          "tools": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tools"
+          }
+        },
+        "title": "AgentOverrides",
+        "type": "object"
+      },
       "Approval": {
         "properties": {
           "agent": {
@@ -737,6 +889,73 @@
           "reason"
         ],
         "title": "CancellationView",
+        "type": "object"
+      },
+      "CapabilityView": {
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "configured_commands": {
+            "title": "Configured Commands",
+            "type": "boolean"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "guidance": {
+            "title": "Guidance",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "optional_tools": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Optional Tools",
+            "type": "array"
+          },
+          "policy": {
+            "items": {
+              "$ref": "#/components/schemas/PolicyOverlayRule"
+            },
+            "title": "Policy",
+            "type": "array"
+          },
+          "tools": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tools",
+            "type": "array"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "name",
+          "description",
+          "tools",
+          "optional_tools",
+          "configured_commands",
+          "guidance",
+          "policy",
+          "available"
+        ],
+        "title": "CapabilityView",
         "type": "object"
       },
       "Certainty": {
@@ -1195,6 +1414,55 @@
         "title": "ContextView",
         "type": "object"
       },
+      "ContractView": {
+        "properties": {
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "input_schema": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "title": "Input Schema",
+            "type": "object"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "rules": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Rules",
+            "type": "array"
+          },
+          "tool": {
+            "title": "Tool",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "name",
+          "description",
+          "rules",
+          "tool",
+          "input_schema"
+        ],
+        "title": "ContractView",
+        "type": "object"
+      },
       "CreatedToken": {
         "properties": {
           "created_at": {
@@ -1388,6 +1656,32 @@
           }
         },
         "title": "DelegationOverrides",
+        "type": "object"
+      },
+      "DeploymentFit": {
+        "properties": {
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/RequirementCheck"
+            },
+            "title": "Checks",
+            "type": "array"
+          },
+          "deployment": {
+            "title": "Deployment",
+            "type": "string"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "deployment",
+          "ok",
+          "checks"
+        ],
+        "title": "DeploymentFit",
         "type": "object"
       },
       "DeploymentInput": {
@@ -1600,6 +1894,31 @@
         "title": "Evidence",
         "type": "object"
       },
+      "ExportInput": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "version": {
+            "default": "1.0.0",
+            "pattern": "^\\d{1,4}\\.\\d{1,4}\\.\\d{1,4}$",
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "title": "ExportInput",
+        "type": "object"
+      },
       "FailureView": {
         "properties": {
           "kind": {
@@ -1629,6 +1948,27 @@
         "title": "FailureView",
         "type": "object"
       },
+      "FieldChange": {
+        "properties": {
+          "after": {
+            "$ref": "#/components/schemas/JsonValue"
+          },
+          "before": {
+            "$ref": "#/components/schemas/JsonValue"
+          },
+          "field": {
+            "title": "Field",
+            "type": "string"
+          }
+        },
+        "required": [
+          "field",
+          "before",
+          "after"
+        ],
+        "title": "FieldChange",
+        "type": "object"
+      },
       "ForgetInput": {
         "additionalProperties": false,
         "properties": {
@@ -1643,6 +1983,45 @@
           "reason"
         ],
         "title": "ForgetInput",
+        "type": "object"
+      },
+      "FromTemplateInput": {
+        "additionalProperties": false,
+        "properties": {
+          "model": {
+            "minLength": 1,
+            "title": "Model",
+            "type": "string"
+          },
+          "name": {
+            "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+            "title": "Name",
+            "type": "string"
+          },
+          "overrides": {
+            "$ref": "#/components/schemas/AgentOverrides",
+            "default": {}
+          },
+          "parameters": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "maxProperties": 16,
+            "title": "Parameters",
+            "type": "object"
+          },
+          "template": {
+            "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+            "title": "Template",
+            "type": "string"
+          }
+        },
+        "required": [
+          "template",
+          "name",
+          "model"
+        ],
+        "title": "FromTemplateInput",
         "type": "object"
       },
       "GroundingReport": {
@@ -2688,6 +3067,55 @@
         "title": "Page[RunSummary]",
         "type": "object"
       },
+      "ParameterView": {
+        "properties": {
+          "choices": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Choices",
+            "type": "array"
+          },
+          "default": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "pattern": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pattern"
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "default"
+        ],
+        "title": "ParameterView",
+        "type": "object"
+      },
       "Plan": {
         "additionalProperties": false,
         "description": "A fixed delegation plan run by the deterministic `workflow` coordinator (ADR-0030):\nevery wave of ready steps is delegated at once, and a step runs only after the steps it\ndepends on completed. Steps asked the same objective have their answers compared.",
@@ -3260,6 +3688,34 @@
           "outcome"
         ],
         "title": "ReportView",
+        "type": "object"
+      },
+      "RequirementCheck": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "hard": {
+            "title": "Hard",
+            "type": "boolean"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "requirement": {
+            "title": "Requirement",
+            "type": "string"
+          }
+        },
+        "required": [
+          "requirement",
+          "ok",
+          "hard",
+          "detail"
+        ],
+        "title": "RequirementCheck",
         "type": "object"
       },
       "ResolvedItem": {
@@ -4072,6 +4528,106 @@
         "title": "SettingsView",
         "type": "object"
       },
+      "SkillView": {
+        "properties": {
+          "allowed_tools": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Tools",
+            "type": "array"
+          },
+          "compatibility": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Compatibility"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "files": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Files",
+            "type": "array"
+          },
+          "license": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "License"
+          },
+          "metadata": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": {},
+            "title": "Metadata",
+            "type": "object"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "description"
+        ],
+        "title": "SkillView",
+        "type": "object"
+      },
+      "SkillsView": {
+        "properties": {
+          "directory": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Directory"
+          },
+          "problems": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Problems",
+            "type": "array"
+          },
+          "skills": {
+            "items": {
+              "$ref": "#/components/schemas/SkillView"
+            },
+            "title": "Skills",
+            "type": "array"
+          }
+        },
+        "required": [
+          "directory",
+          "skills"
+        ],
+        "title": "SkillsView",
+        "type": "object"
+      },
       "SourceDetail": {
         "properties": {
           "chunks": {
@@ -4433,6 +4989,280 @@
           "rejected"
         ],
         "title": "SyncResultView",
+        "type": "object"
+      },
+      "TemplateDetail": {
+        "properties": {
+          "agents": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Agents",
+            "type": "array"
+          },
+          "budget": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunBudget"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Capabilities",
+            "type": "array"
+          },
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/RequirementCheck"
+            },
+            "title": "Checks",
+            "type": "array"
+          },
+          "contract": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contract"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "digest": {
+            "title": "Digest",
+            "type": "string"
+          },
+          "examples": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Examples",
+            "type": "array"
+          },
+          "fits": {
+            "items": {
+              "$ref": "#/components/schemas/DeploymentFit"
+            },
+            "title": "Fits",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "instructions": {
+            "title": "Instructions",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "parameters": {
+            "items": {
+              "$ref": "#/components/schemas/ParameterView"
+            },
+            "title": "Parameters",
+            "type": "array"
+          },
+          "policy": {
+            "items": {
+              "$ref": "#/components/schemas/PolicyOverlayRule"
+            },
+            "title": "Policy",
+            "type": "array"
+          },
+          "ready": {
+            "title": "Ready",
+            "type": "boolean"
+          },
+          "requires": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "title": "Requires",
+            "type": "object"
+          },
+          "skills": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Skills",
+            "type": "array"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "tools": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tools",
+            "type": "array"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "name",
+          "description",
+          "source",
+          "digest",
+          "capabilities",
+          "contract",
+          "parameters",
+          "examples",
+          "ready",
+          "checks",
+          "instructions",
+          "tools",
+          "policy",
+          "budget",
+          "skills",
+          "requires",
+          "fits"
+        ],
+        "title": "TemplateDetail",
+        "type": "object"
+      },
+      "TemplateExport": {
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "filename",
+          "content"
+        ],
+        "title": "TemplateExport",
+        "type": "object"
+      },
+      "TemplateView": {
+        "properties": {
+          "agents": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Agents",
+            "type": "array"
+          },
+          "capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Capabilities",
+            "type": "array"
+          },
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/RequirementCheck"
+            },
+            "title": "Checks",
+            "type": "array"
+          },
+          "contract": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contract"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "digest": {
+            "title": "Digest",
+            "type": "string"
+          },
+          "examples": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Examples",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "parameters": {
+            "items": {
+              "$ref": "#/components/schemas/ParameterView"
+            },
+            "title": "Parameters",
+            "type": "array"
+          },
+          "ready": {
+            "title": "Ready",
+            "type": "boolean"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "name",
+          "description",
+          "source",
+          "digest",
+          "capabilities",
+          "contract",
+          "parameters",
+          "examples",
+          "ready",
+          "checks"
+        ],
+        "title": "TemplateView",
         "type": "object"
       },
       "TokenAccounting": {
@@ -4969,6 +5799,97 @@
         "title": "TurnView",
         "type": "object"
       },
+      "UpgradeInput": {
+        "additionalProperties": false,
+        "properties": {
+          "digest": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Digest",
+            "type": "string"
+          },
+          "reset": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Reset",
+            "type": "array"
+          }
+        },
+        "required": [
+          "digest"
+        ],
+        "title": "UpgradeInput",
+        "type": "object"
+      },
+      "UpgradePreview": {
+        "properties": {
+          "agent": {
+            "title": "Agent",
+            "type": "string"
+          },
+          "changes": {
+            "items": {
+              "$ref": "#/components/schemas/FieldChange"
+            },
+            "title": "Changes",
+            "type": "array"
+          },
+          "checks": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/RequirementCheck"
+            },
+            "title": "Checks",
+            "type": "array"
+          },
+          "from_digest": {
+            "title": "From Digest",
+            "type": "string"
+          },
+          "from_version": {
+            "title": "From Version",
+            "type": "string"
+          },
+          "kept": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Kept",
+            "type": "array"
+          },
+          "template": {
+            "title": "Template",
+            "type": "string"
+          },
+          "to_digest": {
+            "title": "To Digest",
+            "type": "string"
+          },
+          "to_version": {
+            "title": "To Version",
+            "type": "string"
+          },
+          "up_to_date": {
+            "title": "Up To Date",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "agent",
+          "template",
+          "from_version",
+          "to_version",
+          "from_digest",
+          "to_digest",
+          "up_to_date",
+          "changes",
+          "kept"
+        ],
+        "title": "UpgradePreview",
+        "type": "object"
+      },
       "UsageView": {
         "properties": {
           "input_tokens": {
@@ -5165,6 +6086,48 @@
         ]
       }
     },
+    "/v1/agents/from-template": {
+      "post": {
+        "description": "Create an ordinary agent from a template (admin). Hard requirement failures answer 422\nwith the reasons.",
+        "operationId": "create_agent_from_template_v1_agents_from_template_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FromTemplateInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Agent"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Agent From Template",
+        "tags": [
+          "agents"
+        ]
+      }
+    },
     "/v1/agents/starter": {
       "post": {
         "description": "Create the starter `docs` collection and default agent (admin; idempotent).",
@@ -5312,6 +6275,153 @@
         ]
       }
     },
+    "/v1/agents/{name}/export": {
+      "post": {
+        "description": "The agent as a template file to share by copying (admin).",
+        "operationId": "export_agent_v1_agents__name__export_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExportInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TemplateExport"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Export Agent",
+        "tags": [
+          "agents"
+        ]
+      }
+    },
+    "/v1/agents/{name}/upgrade": {
+      "get": {
+        "description": "What upgrading the agent to its template's current version would change (admin).",
+        "operationId": "upgrade_preview_v1_agents__name__upgrade_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpgradePreview"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Upgrade Preview",
+        "tags": [
+          "agents"
+        ]
+      },
+      "post": {
+        "description": "Apply the upgrade the preview showed; 409 if the template changed since (admin).",
+        "operationId": "upgrade_agent_v1_agents__name__upgrade_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpgradeInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Agent"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Upgrade Agent",
+        "tags": [
+          "agents"
+        ]
+      }
+    },
     "/v1/approvals": {
       "get": {
         "operationId": "approvals_v1_approvals_get",
@@ -5386,6 +6496,56 @@
         "summary": "Audit",
         "tags": [
           "system"
+        ]
+      }
+    },
+    "/v1/capabilities": {
+      "get": {
+        "operationId": "capabilities_v1_capabilities_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CapabilityView"
+                  },
+                  "title": "Response Capabilities V1 Capabilities Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Capabilities",
+        "tags": [
+          "specialization"
+        ]
+      }
+    },
+    "/v1/contracts": {
+      "get": {
+        "operationId": "contracts_v1_contracts_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ContractView"
+                  },
+                  "title": "Response Contracts V1 Contracts Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Contracts",
+        "tags": [
+          "specialization"
         ]
       }
     },
@@ -7485,6 +8645,94 @@
         "summary": "Update Config",
         "tags": [
           "system"
+        ]
+      }
+    },
+    "/v1/skills": {
+      "get": {
+        "operationId": "skills_v1_skills_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillsView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Skills",
+        "tags": [
+          "specialization"
+        ]
+      }
+    },
+    "/v1/templates": {
+      "get": {
+        "operationId": "templates_v1_templates_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TemplateView"
+                  },
+                  "title": "Response Templates V1 Templates Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Templates",
+        "tags": [
+          "specialization"
+        ]
+      }
+    },
+    "/v1/templates/{template_id}": {
+      "get": {
+        "operationId": "template_v1_templates__template_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "template_id",
+            "required": true,
+            "schema": {
+              "title": "Template Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TemplateDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Template",
+        "tags": [
+          "specialization"
         ]
       }
     },

@@ -15,7 +15,19 @@ from hollis.runtime.memory import MemoryAccess, MemoryKind
 
 
 def register(cli: click.Group) -> None:
-    for group in (agents, models, tools, mcp, knowledge, memory, tokens, principals, config):
+    for group in (
+        agents,
+        templates,
+        skills,
+        models,
+        tools,
+        mcp,
+        knowledge,
+        memory,
+        tokens,
+        principals,
+        config,
+    ):
         cli.add_command(group)
 
 
@@ -119,6 +131,28 @@ def agents_show(state: State, name: str) -> None:
                     else "workspace default",
                 ),
                 ("episodes", "recorded" if agent.record_episodes else "off"),
+                ("contract", agent.contract or "none"),
+                (
+                    "policy",
+                    "; ".join(
+                        f"{r.decision.value} {r.name or r.tools}"
+                        + (f" outside {', '.join(sorted(r.outside))}" if r.outside else "")
+                        for r in agent.policy
+                    )
+                    or "workspace policy only",
+                ),
+                ("skills", ", ".join(agent.skills) or "none"),
+                (
+                    "template",
+                    f"{agent.origin.template} {agent.origin.version}"
+                    + (
+                        f" (customized: {', '.join(agent.origin.overrides)})"
+                        if agent.origin.overrides
+                        else ""
+                    )
+                    if agent.origin
+                    else "none",
+                ),
                 ("delegates", ", ".join(agent.delegates) or "none"),
                 (
                     "delegation",
@@ -250,11 +284,23 @@ def _agent_fields(**values: Any) -> dict[str, Any]:
 
 @agents.command("create")
 @click.argument("name")
+@click.option("--template", "-t", help="Make it from a template (see `hollis templates list`).")
+@click.option(
+    "--param",
+    "params",
+    multiple=True,
+    help="A template parameter, name=value (repeatable).",
+)
 @_agent_options
 @json_option
 @pass_state
-def agents_create(state: State, name: str, **values: Any) -> None:
-    """Create an agent (admin).
+def agents_create(
+    state: State, name: str, template: str | None, params: tuple[str, ...], **values: Any
+) -> None:
+    """Create an agent (admin), from scratch or from a template.
+
+    With --template, the other options override the template's fields or set the agent's own
+    (knowledge, memory, delegates).
 
     \b
     Example:
@@ -262,11 +308,26 @@ def agents_create(state: State, name: str, **values: Any) -> None:
         --collection docs --memory team:review --instructions @prompts/reviewer.md
       hollis agents create lead -m demo --delegate researcher --delegate reviewer \\
         --collection docs --token-budget 200000
+      hollis agents create writer -m demo --template technical-writer --param docs_dir=manual
     """
     fields = _agent_fields(**values)
     if "model" not in fields:
         raise click.UsageError("--model is required")
-    agent = state.client().agents.create(AgentInput.model_validate({"name": name, **fields}))
+    if template is not None:
+        parameters: dict[str, str] = {}
+        for item in params:
+            key, sep, value = item.partition("=")
+            if not sep:
+                raise click.UsageError(f"--param {item!r}: use name=value")
+            parameters[key] = value
+        model = fields.pop("model")
+        agent = state.client().agents.create_from_template(
+            template, name, model, parameters=parameters, **fields
+        )
+    elif params:
+        raise click.UsageError("--param needs --template")
+    else:
+        agent = state.client().agents.create(AgentInput.model_validate({"name": name, **fields}))
     _out(
         state,
         agent,
@@ -306,6 +367,203 @@ def agents_delete(state: State, name: str, yes: bool) -> None:
         click.confirm(f"Delete agent {name}?", abort=True)
     state.client().agents.delete(name)
     state.console.note(f"Deleted agent {name}.")
+
+
+@agents.command("upgrade")
+@click.argument("name", shell_complete=_complete_agents)
+@click.option(
+    "--reset",
+    multiple=True,
+    help="A customized field to take from the template again (repeatable).",
+)
+@click.option("--yes", is_flag=True, help="Apply without asking.")
+@json_option
+@pass_state
+def agents_upgrade(state: State, name: str, reset: tuple[str, ...], yes: bool) -> None:
+    """Upgrade an agent to its template's current version (admin), after a preview.
+
+    Customized fields are kept unless --reset names them."""
+    client = state.client()
+    preview = client.agents.upgrade_preview(name)
+    console = state.console
+    if preview.up_to_date and not reset:
+        _out(state, preview, lambda: console.note(f"{name} is up to date ({preview.to_version})."))
+        return
+    if not console.json:
+        console.print(
+            f"{console.style(name, 'bold')}: {preview.template} {preview.from_version} -> "
+            f"{preview.to_version}"
+        )
+        for change in preview.changes:
+            console.print(f"  changes {change.field}")
+        if preview.kept:
+            console.print(f"  keeps customized {', '.join(preview.kept)}")
+        for check in preview.checks:
+            if not check.ok:
+                console.warn(f"{check.requirement}: {check.detail}")
+    if not yes:
+        click.confirm("Apply the upgrade?", abort=True)
+    agent = client.agents.upgrade(name, digest=preview.to_digest, reset=reset)
+    _out(
+        state,
+        agent,
+        lambda: console.print(f"{_ok(console)} Upgraded {name} to version {agent.version}."),
+    )
+
+
+@agents.command("export")
+@click.argument("name", shell_complete=_complete_agents)
+@click.option("--id", "template_id", help="Template id (default: the agent's name).")
+@click.option("--version", default="1.0.0", show_default=True)
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(dir_okay=False, writable=True),
+    help="Write the template file here (default: print it).",
+)
+@pass_state
+def agents_export(
+    state: State, name: str, template_id: str | None, version: str, output: str | None
+) -> None:
+    """Write an agent as a template file (admin): share it by copying it into another
+    workspace's templates directory."""
+    exported = state.client().agents.export_template(name, id=template_id, version=version)
+    if output is None:
+        click.echo(exported.content, nl=False)
+        return
+    Path(output).write_text(exported.content, encoding="utf-8")
+    state.console.note(f"Wrote template {exported.id} {exported.version} to {output}.")
+
+
+# --- templates and skills ---------------------------------------------------------------------
+
+
+@click.group()
+def templates() -> None:
+    """Agent templates: versioned blueprints for specialized agents."""
+
+
+@templates.command("list")
+@json_option
+@pass_state
+def templates_list(state: State) -> None:
+    items = state.client().templates.list()
+    console = state.console
+    _out(
+        state,
+        items,
+        lambda: console.table(
+            ["id", "version", "contract", "ready", "agents", "source"],
+            [
+                [
+                    t.id,
+                    t.version,
+                    t.contract or "-",
+                    "yes"
+                    if t.ready
+                    else "no: " + ", ".join(c.requirement for c in t.checks if c.hard and not c.ok),
+                    ", ".join(t.agents) or "-",
+                    t.source,
+                ]
+                for t in items
+            ],
+            flex=3,
+        ),
+    )
+
+
+@templates.command("show")
+@click.argument("template_id")
+@json_option
+@pass_state
+def templates_show(state: State, template_id: str) -> None:
+    template = state.client().templates.get(template_id)
+    console = state.console
+
+    def render() -> None:
+        console.print(console.style(f"{template.name} ({template.id} {template.version})", "bold"))
+        console.print(f"  {template.description}")
+        console.fields(
+            [
+                ("contract", template.contract or "none"),
+                ("capabilities", ", ".join(template.capabilities) or "none"),
+                ("tools", ", ".join(template.tools) or "none"),
+                (
+                    "parameters",
+                    ", ".join(
+                        f"{p.name}={p.default!r}"
+                        if p.default is not None
+                        else f"{p.name} (required)"
+                        for p in template.parameters
+                    )
+                    or "none",
+                ),
+                ("source", f"{template.source} · {template.digest}"),
+            ],
+            indent=2,
+        )
+        console.print()
+        for check in template.checks:
+            mark = (
+                _ok(console) if check.ok else console.style("!" if not check.hard else "x", "red")
+            )
+            console.print(f"  {mark} {check.requirement}: {check.detail}")
+        for fit in template.fits:
+            mark = _ok(console) if fit.ok else console.style("x", "red")
+            problems = [c.detail for c in fit.checks if not c.ok]
+            console.print(
+                f"  {mark} model {fit.deployment}"
+                + (f": {'; '.join(problems)}" if problems else "")
+            )
+        if template.examples:
+            console.print()
+            console.print(console.style("  example tasks", "dim"))
+            for example in template.examples:
+                console.print(f"    {example}")
+
+    _out(state, template, render)
+
+
+@templates.command("contracts")
+@json_option
+@pass_state
+def templates_contracts(state: State) -> None:
+    """Output contracts and what Hollis checks for each."""
+    items = state.client().templates.contracts()
+    console = state.console
+
+    def render() -> None:
+        for contract in items:
+            console.print(console.style(f"{contract.id}", "bold") + f"  {contract.description}")
+            for rule in contract.rules:
+                console.print(f"  - {rule}")
+
+    _out(state, items, render)
+
+
+@click.group()
+def skills() -> None:
+    """Agent Skills in this workspace (SKILL.md folders, offered to agents, never executed)."""
+
+
+@skills.command("list")
+@json_option
+@pass_state
+def skills_list(state: State) -> None:
+    view = state.client().templates.skills()
+    console = state.console
+
+    def render() -> None:
+        console.table(
+            ["name", "description", "files"],
+            [[s.name, s.description, str(len(s.files))] for s in view.skills],
+            flex=1,
+            empty="No skills: add folders with a SKILL.md under the skills directory.",
+        )
+        for problem in view.problems:
+            console.warn(problem)
+
+    _out(state, view, render)
 
 
 # --- models ---------------------------------------------------------------------------------------

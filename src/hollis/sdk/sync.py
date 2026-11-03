@@ -22,7 +22,9 @@ from hollis.platform.schemas import (
     AgentInput,
     Approval,
     ArtifactView,
+    CapabilityView,
     CollectionView,
+    ContractView,
     CreatedToken,
     DeploymentView,
     EventView,
@@ -33,6 +35,7 @@ from hollis.platform.schemas import (
     MemoryDetail,
     MemoryView,
     OrchestrationView,
+    OutputView,
     Page,
     Plan,
     PrincipalInput,
@@ -43,12 +46,17 @@ from hollis.platform.schemas import (
     RunSummary,
     SearchResultView,
     SettingsView,
+    SkillsView,
     SourceDetail,
     SourceView,
     SyncResultView,
+    TemplateDetail,
+    TemplateExport,
+    TemplateView,
     TokenView,
     ToolActivity,
     ToolView,
+    UpgradePreview,
     WriteResultView,
 )
 from hollis.runtime.knowledge import SourceTrust
@@ -159,6 +167,9 @@ class RunHandle:
     def tree(self) -> OrchestrationView:
         return self._portal.call(self._handle.tree())
 
+    def output(self) -> OutputView | None:
+        return self._portal.call(self._handle.output())
+
 
 class Runs:
     def __init__(self, portal: _Portal, runs: aio.Runs) -> None:
@@ -243,6 +254,58 @@ class Agents:
 
     def starter(self) -> Agent:
         return self._portal.call(self._agents.starter())
+
+    def create_from_template(
+        self,
+        template: str,
+        name: str,
+        model: str,
+        *,
+        parameters: Mapping[str, str] | None = None,
+        **overrides: Any,
+    ) -> Agent:
+        return self._portal.call(
+            self._agents.create_from_template(
+                template, name, model, parameters=parameters, **overrides
+            )
+        )
+
+    def customize(self, name: str, **fields: Any) -> Agent:
+        return self._portal.call(self._agents.customize(name, **fields))
+
+    def upgrade_preview(self, name: str) -> UpgradePreview:
+        return self._portal.call(self._agents.upgrade_preview(name))
+
+    def upgrade(
+        self, name: str, *, digest: str | None = None, reset: tuple[str, ...] = ()
+    ) -> Agent:
+        return self._portal.call(self._agents.upgrade(name, digest=digest, reset=reset))
+
+    def export_template(
+        self, name: str, *, id: str | None = None, version: str = "1.0.0"
+    ) -> TemplateExport:
+        return self._portal.call(self._agents.export_template(name, id=id, version=version))
+
+
+class Templates:
+    def __init__(self, portal: _Portal, templates: aio.Templates) -> None:
+        self._portal = portal
+        self._templates = templates
+
+    def list(self) -> builtins.list[TemplateView]:
+        return self._portal.call(self._templates.list())
+
+    def get(self, template_id: str) -> TemplateDetail:
+        return self._portal.call(self._templates.get(template_id))
+
+    def capabilities(self) -> builtins.list[CapabilityView]:
+        return self._portal.call(self._templates.capabilities())
+
+    def contracts(self) -> builtins.list[ContractView]:
+        return self._portal.call(self._templates.contracts())
+
+    def skills(self) -> SkillsView:
+        return self._portal.call(self._templates.skills())
 
 
 class Models:
@@ -454,6 +517,7 @@ class Hollis:
         self.runs = Runs(portal, client.runs)
         self.approvals = Approvals(portal, client.approvals)
         self.agents = Agents(portal, client.agents)
+        self.templates = Templates(portal, client.templates)
         self.models = Models(portal, client.models)
         self.tools = Tools(portal, client.tools)
         self.knowledge = Knowledge(portal, client.knowledge)

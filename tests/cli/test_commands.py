@@ -265,3 +265,71 @@ def test_delegation_from_the_cli(workspace: Path, capsys: pytest.CaptureFixture[
     bad = workspace / "bad.toml"
     bad.write_text('[[steps]]\nid = "a"\nagent = "nobody"\nobjective = "x"\n')
     assert cli(capsys, "run", "--plan", str(bad), "x")[0] != 0
+
+
+def test_specialists_from_the_command_line(
+    workspace: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    capsys.readouterr()
+    (workspace / "billing.py").write_text("def tax(x):\n    return x * 0.2\n")
+    listed = {t["id"]: t for t in cli_json(capsys, "templates", "list")}
+    assert listed["code-reviewer"]["ready"] is True
+    code, out, _ = cli(capsys, "templates", "show", "code-reviewer")
+    assert code == 0
+    assert "code-review" in out
+    assert "model demo" in out
+    code, out, _ = cli(capsys, "templates", "contracts")
+    assert code == 0
+    assert "change-report" in out
+
+    created = cli_json(
+        capsys,
+        "agents",
+        "create",
+        "reviewer",
+        "-m",
+        "demo",
+        "--template",
+        "code-reviewer",
+        "--param",
+        "focus=security",
+        "--description",
+        "Ours.",
+    )
+    assert created["origin"]["template"] == "code-reviewer"
+    assert created["origin"]["overrides"] == ["description"]
+    code, out, _ = cli(capsys, "agents", "show", "reviewer")
+    assert "code-reviewer 1.0.0 (customized: description)" in out
+    assert "deny read-only" in out
+
+    code, out, _ = cli(capsys, "run", "--agent", "reviewer", "Review", "billing.py")
+    assert code == 0
+    assert "output (code-review): accepted" in out
+
+    code, out, _ = cli(capsys, "agents", "upgrade", "reviewer", "--yes")
+    assert code == 0
+    assert "up to date" in out + _
+    code, out, _ = cli(capsys, "agents", "export", "reviewer", "--id", "our-review")
+    assert code == 0
+    assert out.startswith("# Hollis agent template")
+    target = workspace / "agent-templates" / "our-review.toml"
+    target.parent.mkdir()
+    code, _, _ = cli(
+        capsys, "agents", "export", "reviewer", "--id", "our-review", "-o", str(target)
+    )
+    assert code == 0
+    assert any(t["id"] == "our-review" for t in cli_json(capsys, "templates", "list"))
+
+    code, _, err = cli(capsys, "agents", "create", "r", "-m", "demo", "--template", "researcher")
+    assert code != 0
+    assert "knowledge" in err
+    code, _, err = cli(capsys, "agents", "create", "x", "-m", "demo", "--param", "a=b")
+    assert code != 0
+    assert "--param needs --template" in err
+
+    skills = workspace / "skills" / "ship-it"
+    skills.mkdir(parents=True)
+    (skills / "SKILL.md").write_text("---\nname: ship-it\ndescription: How we ship.\n---\nShip.\n")
+    code, out, _ = cli(capsys, "skills", "list")
+    assert code == 0
+    assert "ship-it" in out

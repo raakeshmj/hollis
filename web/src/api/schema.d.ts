@@ -22,6 +22,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/from-template": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Agent From Template
+         * @description Create an ordinary agent from a template (admin). Hard requirement failures answer 422
+         *     with the reasons.
+         */
+        post: operations["create_agent_from_template_v1_agents_from_template_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/starter": {
         parameters: {
             query?: never;
@@ -61,6 +82,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/{name}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Export Agent
+         * @description The agent as a template file to share by copying (admin).
+         */
+        post: operations["export_agent_v1_agents__name__export_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/{name}/upgrade": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Upgrade Preview
+         * @description What upgrading the agent to its template's current version would change (admin).
+         */
+        get: operations["upgrade_preview_v1_agents__name__upgrade_get"];
+        put?: never;
+        /**
+         * Upgrade Agent
+         * @description Apply the upgrade the preview showed; 409 if the template changed since (admin).
+         */
+        post: operations["upgrade_agent_v1_agents__name__upgrade_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/approvals": {
         parameters: {
             query?: never;
@@ -87,6 +152,40 @@ export interface paths {
         };
         /** Audit */
         get: operations["audit_v1_audit_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Capabilities */
+        get: operations["capabilities_v1_capabilities_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/contracts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Contracts */
+        get: operations["contracts_v1_contracts_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -792,6 +891,57 @@ export interface paths {
         patch: operations["patch_config_v1_settings_config_patch"];
         trace?: never;
     };
+    "/v1/skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Skills */
+        get: operations["skills_v1_skills_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Templates */
+        get: operations["templates_v1_templates_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/templates/{template_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Template */
+        get: operations["template_v1_templates__template_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/tokens": {
         parameters: {
             query?: never;
@@ -1041,6 +1191,32 @@ export interface components {
             /** Version */
             version: string;
         };
+        /**
+         * AgentOverrides
+         * @description Agent fields to set instead of the template's (or besides it, for fields a template
+         *     never sets). Unset fields are not overridden.
+         */
+        AgentOverrides: {
+            budget?: components["schemas"]["RunBudget"] | null;
+            context?: components["schemas"]["ContextPolicy"] | null;
+            /** Delegates */
+            delegates?: string[] | null;
+            delegation?: components["schemas"]["DelegationOverrides"] | null;
+            /** Description */
+            description?: string | null;
+            /** Instructions */
+            instructions?: string | null;
+            knowledge?: components["schemas"]["KnowledgeAccess"] | null;
+            memory?: components["schemas"]["MemoryAccess"] | null;
+            /** Policy */
+            policy?: components["schemas"]["PolicyOverlayRule"][] | null;
+            /** Record Episodes */
+            record_episodes?: boolean | null;
+            /** Skills */
+            skills?: string[] | null;
+            /** Tools */
+            tools?: string[] | null;
+        };
         /** Approval */
         Approval: {
             /** Agent */
@@ -1194,6 +1370,29 @@ export interface components {
             interrupted: string[];
             /** Reason */
             reason: string;
+        };
+        /** CapabilityView */
+        CapabilityView: {
+            /** Available */
+            available: boolean;
+            /** Configured Commands */
+            configured_commands: boolean;
+            /** Description */
+            description: string;
+            /** Guidance */
+            guidance: string;
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Optional Tools */
+            optional_tools: string[];
+            /** Policy */
+            policy: components["schemas"]["PolicyOverlayRule"][];
+            /** Tools */
+            tools: string[];
+            /** Version */
+            version: string;
         };
         /**
          * Certainty
@@ -1417,6 +1616,25 @@ export interface components {
             /** Window */
             window: number | null;
         };
+        /** ContractView */
+        ContractView: {
+            /** Description */
+            description: string;
+            /** Id */
+            id: string;
+            /** Input Schema */
+            input_schema: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Name */
+            name: string;
+            /** Rules */
+            rules: string[];
+            /** Tool */
+            tool: string;
+            /** Version */
+            version: string;
+        };
         /** CreatedToken */
         CreatedToken: {
             /**
@@ -1485,6 +1703,15 @@ export interface components {
             token_budget?: number | null;
             /** Wait S */
             wait_s?: number | null;
+        };
+        /** DeploymentFit */
+        DeploymentFit: {
+            /** Checks */
+            checks: components["schemas"]["RequirementCheck"][];
+            /** Deployment */
+            deployment: string;
+            /** Ok */
+            ok: boolean;
         };
         /**
          * DeploymentInput
@@ -1583,6 +1810,16 @@ export interface components {
             /** Text */
             text: string;
         };
+        /** ExportInput */
+        ExportInput: {
+            /** Id */
+            id?: string | null;
+            /**
+             * Version
+             * @default 1.0.0
+             */
+            version: string;
+        };
         /** FailureView */
         FailureView: {
             /** Kind */
@@ -1592,10 +1829,32 @@ export interface components {
             /** Reason */
             reason: string;
         };
+        /** FieldChange */
+        FieldChange: {
+            after: components["schemas"]["JsonValue"];
+            before: components["schemas"]["JsonValue"];
+            /** Field */
+            field: string;
+        };
         /** ForgetInput */
         ForgetInput: {
             /** Reason */
             reason: string;
+        };
+        /** FromTemplateInput */
+        FromTemplateInput: {
+            /** Model */
+            model: string;
+            /** Name */
+            name: string;
+            /** @default {} */
+            overrides: components["schemas"]["AgentOverrides"];
+            /** Parameters */
+            parameters?: {
+                [key: string]: string;
+            };
+            /** Template */
+            template: string;
         };
         /** GroundingReport */
         GroundingReport: {
@@ -1989,6 +2248,22 @@ export interface components {
             /** Total */
             total: number;
         };
+        /** ParameterView */
+        ParameterView: {
+            /**
+             * Choices
+             * @default []
+             */
+            choices: string[];
+            /** Default */
+            default: string | null;
+            /** Description */
+            description: string;
+            /** Name */
+            name: string;
+            /** Pattern */
+            pattern?: string | null;
+        };
         /**
          * Plan
          * @description A fixed delegation plan run by the deterministic `workflow` coordinator (ADR-0030):
@@ -2218,6 +2493,17 @@ export interface components {
             /** Status */
             status?: string | null;
             verification?: components["schemas"]["VerificationView"] | null;
+        };
+        /** RequirementCheck */
+        RequirementCheck: {
+            /** Detail */
+            detail: string;
+            /** Hard */
+            hard: boolean;
+            /** Ok */
+            ok: boolean;
+            /** Requirement */
+            requirement: string;
         };
         /** ResolvedItem */
         ResolvedItem: {
@@ -2538,6 +2824,46 @@ export interface components {
             /** Workspace Path */
             workspace_path: string;
         };
+        /** SkillView */
+        SkillView: {
+            /**
+             * Allowed Tools
+             * @default []
+             */
+            allowed_tools: string[];
+            /** Compatibility */
+            compatibility?: string | null;
+            /** Description */
+            description: string;
+            /**
+             * Files
+             * @default []
+             */
+            files: string[];
+            /** License */
+            license?: string | null;
+            /**
+             * Metadata
+             * @default {}
+             */
+            metadata: {
+                [key: string]: string;
+            };
+            /** Name */
+            name: string;
+        };
+        /** SkillsView */
+        SkillsView: {
+            /** Directory */
+            directory: string | null;
+            /**
+             * Problems
+             * @default []
+             */
+            problems: string[];
+            /** Skills */
+            skills: components["schemas"]["SkillView"][];
+        };
         /** SourceDetail */
         SourceDetail: {
             /** Chunks */
@@ -2665,6 +2991,96 @@ export interface components {
             unchanged: string[];
             /** Updated */
             updated: string[];
+        };
+        /** TemplateDetail */
+        TemplateDetail: {
+            /**
+             * Agents
+             * @default []
+             */
+            agents: string[];
+            budget: components["schemas"]["RunBudget"] | null;
+            /** Capabilities */
+            capabilities: string[];
+            /** Checks */
+            checks: components["schemas"]["RequirementCheck"][];
+            /** Contract */
+            contract: string | null;
+            /** Description */
+            description: string;
+            /** Digest */
+            digest: string;
+            /** Examples */
+            examples: string[];
+            /** Fits */
+            fits: components["schemas"]["DeploymentFit"][];
+            /** Id */
+            id: string;
+            /** Instructions */
+            instructions: string;
+            /** Name */
+            name: string;
+            /** Parameters */
+            parameters: components["schemas"]["ParameterView"][];
+            /** Policy */
+            policy: components["schemas"]["PolicyOverlayRule"][];
+            /** Ready */
+            ready: boolean;
+            /** Requires */
+            requires: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Skills */
+            skills: string[];
+            /** Source */
+            source: string;
+            /** Tools */
+            tools: string[];
+            /** Version */
+            version: string;
+        };
+        /** TemplateExport */
+        TemplateExport: {
+            /** Content */
+            content: string;
+            /** Filename */
+            filename: string;
+            /** Id */
+            id: string;
+            /** Version */
+            version: string;
+        };
+        /** TemplateView */
+        TemplateView: {
+            /**
+             * Agents
+             * @default []
+             */
+            agents: string[];
+            /** Capabilities */
+            capabilities: string[];
+            /** Checks */
+            checks: components["schemas"]["RequirementCheck"][];
+            /** Contract */
+            contract: string | null;
+            /** Description */
+            description: string;
+            /** Digest */
+            digest: string;
+            /** Examples */
+            examples: string[];
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Parameters */
+            parameters: components["schemas"]["ParameterView"][];
+            /** Ready */
+            ready: boolean;
+            /** Source */
+            source: string;
+            /** Version */
+            version: string;
         };
         /**
          * TokenAccounting
@@ -2842,6 +3258,42 @@ export interface components {
              */
             tool_calls: components["schemas"]["ToolCallView"][];
         };
+        /** UpgradeInput */
+        UpgradeInput: {
+            /** Digest */
+            digest: string;
+            /**
+             * Reset
+             * @default []
+             */
+            reset: string[];
+        };
+        /** UpgradePreview */
+        UpgradePreview: {
+            /** Agent */
+            agent: string;
+            /** Changes */
+            changes: components["schemas"]["FieldChange"][];
+            /**
+             * Checks
+             * @default []
+             */
+            checks: components["schemas"]["RequirementCheck"][];
+            /** From Digest */
+            from_digest: string;
+            /** From Version */
+            from_version: string;
+            /** Kept */
+            kept: string[];
+            /** Template */
+            template: string;
+            /** To Digest */
+            to_digest: string;
+            /** To Version */
+            to_version: string;
+            /** Up To Date */
+            up_to_date: boolean;
+        };
         /** UsageView */
         UsageView: {
             /**
@@ -2951,6 +3403,39 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["AgentInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Agent"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_agent_from_template_v1_agents_from_template_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FromTemplateInput"];
             };
         };
         responses: {
@@ -3089,6 +3574,107 @@ export interface operations {
             };
         };
     };
+    export_agent_v1_agents__name__export_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExportInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateExport"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upgrade_preview_v1_agents__name__upgrade_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpgradePreview"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upgrade_agent_v1_agents__name__upgrade_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpgradeInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Agent"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     approvals_v1_approvals_get: {
         parameters: {
             query?: never;
@@ -3138,6 +3724,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    capabilities_v1_capabilities_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CapabilityView"][];
+                };
+            };
+        };
+    };
+    contracts_v1_contracts_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContractView"][];
                 };
             };
         };
@@ -4536,6 +5162,77 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SettingsView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    skills_v1_skills_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillsView"];
+                };
+            };
+        };
+    };
+    templates_v1_templates_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateView"][];
+                };
+            };
+        };
+    };
+    template_v1_templates__template_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                template_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateDetail"];
                 };
             };
             /** @description Validation Error */

@@ -49,13 +49,17 @@ from hollis.platform.schemas import (
     ApprovalDecisionInput,
     ArtifactView,
     CancelInput,
+    CapabilityView,
     CollectionInput,
     CollectionView,
+    ContractView,
     CreatedToken,
     DeploymentInput,
     DeploymentView,
     EventView,
+    ExportInput,
     ForgetInput,
+    FromTemplateInput,
     Health,
     IngestResultView,
     LabelsInput,
@@ -77,15 +81,21 @@ from hollis.platform.schemas import (
     SearchResultView,
     Session,
     SettingsView,
+    SkillsView,
     SourceDetail,
     SourceView,
     StartRun,
     SyncInput,
     SyncResultView,
+    TemplateDetail,
+    TemplateExport,
+    TemplateView,
     TokenInput,
     TokenView,
     ToolActivity,
     ToolView,
+    UpgradeInput,
+    UpgradePreview,
     WriteResultView,
 )
 from hollis.platform.services import Platform
@@ -432,6 +442,63 @@ async def update_agent(name: str, spec: AgentInput, platform: Plat, caller: Call
 async def delete_agent(name: str, platform: Plat, caller: Caller) -> Response:
     await platform.delete_agent(caller, name)
     return Response(status_code=204)
+
+
+@api.post("/agents/from-template", tags=["agents"], status_code=201)
+async def create_agent_from_template(
+    spec: FromTemplateInput, platform: Plat, caller: Caller
+) -> Agent:
+    """Create an ordinary agent from a template (admin). Hard requirement failures answer 422
+    with the reasons."""
+    return await platform.create_agent_from_template(caller, spec)
+
+
+@api.get("/agents/{name}/upgrade", tags=["agents"])
+async def upgrade_preview(name: str, platform: Plat, caller: Caller) -> UpgradePreview:
+    """What upgrading the agent to its template's current version would change (admin)."""
+    return await platform.upgrade_preview(caller, name)
+
+
+@api.post("/agents/{name}/upgrade", tags=["agents"])
+async def upgrade_agent(name: str, spec: UpgradeInput, platform: Plat, caller: Caller) -> Agent:
+    """Apply the upgrade the preview showed; 409 if the template changed since (admin)."""
+    return await platform.upgrade_agent(caller, name, spec)
+
+
+@api.post("/agents/{name}/export", tags=["agents"])
+async def export_agent(
+    name: str, spec: ExportInput, platform: Plat, caller: Caller
+) -> TemplateExport:
+    """The agent as a template file to share by copying (admin)."""
+    return await platform.export_agent(caller, name, spec)
+
+
+# specialization
+
+
+@api.get("/templates", tags=["specialization"])
+async def templates(platform: Plat, caller: Caller) -> list[TemplateView]:
+    return await platform.templates(caller)
+
+
+@api.get("/templates/{template_id}", tags=["specialization"])
+async def template(template_id: str, platform: Plat, caller: Caller) -> TemplateDetail:
+    return await platform.template(caller, template_id)
+
+
+@api.get("/capabilities", tags=["specialization"])
+async def capabilities(platform: Plat, caller: Caller) -> list[CapabilityView]:
+    return await platform.capabilities(caller)
+
+
+@api.get("/contracts", tags=["specialization"])
+async def contracts(platform: Plat, caller: Caller) -> list[ContractView]:
+    return await platform.contracts(caller)
+
+
+@api.get("/skills", tags=["specialization"])
+async def skills(platform: Plat, caller: Caller) -> SkillsView:
+    return await platform.skills(caller)
 
 
 # runs

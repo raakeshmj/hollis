@@ -204,3 +204,54 @@ async def test_orchestration_through_the_sdk(client: AsyncHollis, platform: Plat
     assert (await planned.wait(timeout_s=20)).phase is RunPhase.COMPLETED
     assert planned.summary.model == "workflow"
     assert len((await planned.tree()).nodes) == 2
+
+
+async def test_specialists_through_the_sdk(client: AsyncHollis, platform: Platform) -> None:
+    (platform.ws.root / "app.py").write_text("print('hello')\n")
+    gallery = {t.id: t for t in await client.templates.list()}
+    assert gallery["code-reviewer"].ready
+    assert (await client.templates.get("code-reviewer")).contract == "code-review"
+    assert {c.id for c in await client.templates.capabilities()} >= {"read-only"}
+    assert {c.id for c in await client.templates.contracts()} >= {"code-review"}
+    assert (await client.templates.skills()).skills == ()
+
+    agent = await client.agents.create_from_template(
+        "code-reviewer", "reviewer", "demo", parameters={"focus": "security"}
+    )
+    assert agent.origin is not None
+    assert "security" in agent.instructions
+    with pytest.raises(InvalidRequest, match="knowledge"):
+        await client.agents.create_from_template("researcher", "r", "demo")
+
+    run = await client.runs.start("Review app.py", agent="reviewer")
+    await run.wait(timeout_s=10)
+    output = await run.output()
+    assert output is not None
+    assert output.status == "accepted"
+
+    customized = await client.agents.customize("reviewer", description="Ours.")
+    assert customized.origin is not None
+    assert customized.origin.overrides == ("description",)
+    preview = await client.agents.upgrade_preview("reviewer")
+    assert preview.up_to_date
+    assert preview.kept == ("description",)
+    upgraded = await client.agents.upgrade("reviewer", digest=preview.to_digest)
+    assert upgraded.description == "Ours."
+    exported = await client.agents.export_template("reviewer", id="our-review")
+    assert exported.content.startswith("# Hollis agent template")
+
+
+def test_the_synchronous_client_makes_specialists(tmp_path: Path) -> None:
+    initialize(tmp_path, "sync")
+    with Hollis.open(tmp_path) as hollis:
+        assert any(t.id == "data-analyst" for t in hollis.templates.list())
+        (tmp_path / "sales.csv").write_text("region,amount\nnorth,1\n")
+        hollis.agents.create_from_template("data-analyst", "analyst", "demo")
+        run = hollis.runs.start("How many sales?", agent="analyst")
+        run.wait(timeout_s=10)
+        output = run.output()
+        assert output is not None
+        assert output.status == "accepted"
+        assert hollis.agents.export_template("analyst", id="our-analyst").filename == (
+            "our-analyst.toml"
+        )
