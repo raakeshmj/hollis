@@ -88,16 +88,27 @@ Roles: **A** admin, **O** operator or admin, **V** anyone authenticated (results
 | `GET /v1/agents` · `GET /v1/agents/{name}` | V | |
 | `POST /v1/agents` · `PUT /v1/agents/{name}` · `DELETE /v1/agents/{name}` | A | each update is a new version |
 | `POST /v1/agents/starter` | A | create the starter `docs` collection and default agent (idempotent) |
+| `POST /v1/agents/from-template` | A | `{"template", "name", "model", "parameters"?, "overrides"?}` → 201 with the agent and its `origin`; 422 with the reasons when a hard requirement fails ([specialists](../guides/specialists.md)) |
+| `GET /v1/agents/{name}/upgrade` · `POST /v1/agents/{name}/upgrade` | A | the preview (`changes`, `kept`, `to_digest`, `checks`) · `{"digest", "reset"?}` applies it; 409 if the template's digest moved since the preview |
+| `POST /v1/agents/{name}/export` | A | `{"id"?, "version"?}` → `{"filename", "content"}`: the agent as a template (TOML) |
 | `GET /v1/runs?phase=&agent=&roots=&limit=&offset=` | V | newest first: `{"items": [...], "total"}`; `roots=true` leaves out delegated runs. Summaries carry `parent_run_id`, `root_run_id`, `depth`, `children` and a delegated run's `objective` |
 | `POST /v1/runs` | O | `{"input", "agent"?, "session"?}`; or `{"input", "plan": {"steps": [{"id", "agent", "objective", "depends_on"?, ...}], "answer"?}}` to run a fixed plan on the workflow coordinator; admins may give `model`, `tools`, `instructions` instead of `agent`. Without either, the default agent |
 | `GET /v1/runs/{id}/tree` | V | the orchestration the run belongs to: every run delegated below the root that you can see (pre-order), each run's report, refusals, disagreements, totals and limits ([guide](../guides/orchestration.md)) |
-| `GET /v1/runs/{id}` | V | everything computed from the event log: turns, tool calls, approvals, answer, grounding, access, failure; for a delegated run its `lineage` (ancestors), `assignment` and `delegation` limits |
+| `GET /v1/runs/{id}` | V | everything computed from the event log: turns, tool calls, approvals, answer, grounding, access, failure; the overlay rules it was held to (`policy`) and, under a contract, its `output` (`status` accepted, rejected or missing, `data`, `problems`); for a delegated run its `lineage` (ancestors), `assignment` and `delegation` limits |
 | `GET /v1/runs/{id}/summary[?wait_s=]` | V | |
 | `GET /v1/runs/{id}/events?after=` · `GET /v1/runs/{id}/stream` | V | |
 | `POST /v1/runs/{id}/cancel` · `POST /v1/runs/{id}/resume` | creator or A | cancelling also cancels every run it delegated |
 | `GET /v1/runs/{id}/artifacts/{artifact}?offset=&length=` | V | |
 | `GET /v1/approvals` | V | pending calls in runs you can see; calls in delegated runs carry `root_run_id`, `depth` and the agents' `lineage` |
 | `POST /v1/runs/{id}/approvals/{invocation_id}` | approve permission, and the run visible to you | `{"approved", "reason"?}`. Invocation ids contain slashes and are used verbatim. Recorded with your name; applies only to that exact call |
+
+### Specialization
+
+| Endpoint | Who | |
+|---|---|---|
+| `GET /v1/templates` · `GET /v1/templates/{id}` | V | templates with readiness in this workspace (`ready`, `checks`, `agents`) · detail with procedure, tools, overlay rules, requirements and per-deployment `fits` |
+| `GET /v1/capabilities` · `GET /v1/contracts` | V | capabilities (and whether their tools exist here) · output contracts, their rules and submission schemas |
+| `GET /v1/skills` | V | Agent Skills in the workspace and folders that could not be loaded |
 
 ### Models and tools
 

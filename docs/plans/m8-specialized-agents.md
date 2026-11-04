@@ -2,6 +2,14 @@
 
 Branch `m8-specialized-agents`, from `m7-orchestration`. Owned end to end. No separate approval step.
 
+**Status: implemented and verified offline** (see the [roadmap](../product/roadmap.md) row and the [evaluation](../architecture/specialist-evaluation.md)). Changes from the plan below, found while building it:
+- Overlays live in `hollis.runtime.tools` (next to the policy types), not `hollis.runtime.policy`.
+- Contracts reference the call ids the model sees, not invocation ids, which models never see.
+- A research brief may cite a delegated run only if it completed *with its output accepted*.
+- File tools gained protected paths and link-free writes ([ADR-0036](../decisions/0036-capability-tools-and-protected-paths.md)); the skills and templates directories are protected because they become instructions.
+- Templates are TOML under `hollis/specialists/data/`; workspace templates live in `agent-templates/` (`[specialists]` configures both directories).
+- ADRs 0033–0036 record the decisions.
+
 ## Starting point
 
 M7 gives durable runs, tools with policy and approvals, context, memory, knowledge, delegation and four interfaces. An "agent" today is a model, instructions, a list of tool names and access grants. Nothing in that makes an agent good at a kind of work:

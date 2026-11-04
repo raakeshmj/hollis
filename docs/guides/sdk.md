@@ -51,9 +51,10 @@ asyncio.run(main())
 | Namespace | Operations |
 |---|---|
 | `runs` | `start(input, agent=…, session=…)` or `start(input, plan=Plan(...))`, `get(id)`, `list(phase=…, agent=…, roots=…)` |
-| run handle | `wait`, `refresh`, `detail`, `answer`, `events`, `stream`, `approvals`, `approve`, `deny`, `cancel`, `resume`, `artifact`, `tree` (the orchestration it belongs to) |
+| run handle | `wait`, `refresh`, `detail`, `answer`, `events`, `stream`, `approvals`, `approve`, `deny`, `cancel`, `resume`, `artifact`, `tree` (the orchestration it belongs to), `output` (its checked structured result under a contract) |
 | `approvals` | `list`, `approve(approval)`, `deny(approval)` |
-| `agents` | `list`, `get`, `create(name=…, model=…, tools=…, delegates=…)`, `update(name, **changes)`, `delete`, `starter` |
+| `agents` | `list`, `get`, `create(name=…, model=…, tools=…, delegates=…, policy=…, contract=…, skills=…)`, `update(name, **changes)`, `delete`, `starter`; `create_from_template(template, name, model, parameters=…, **overrides)`, `customize(name, **changes)`, `upgrade_preview(name)`, `upgrade(name, digest=…, reset=…)`, `export_template(name, id=…)` |
+| `templates` | `list` (with readiness), `get(id)` (with per-model fit), `capabilities`, `contracts`, `skills` |
 | `models` | `list`, `get`, `put(definition)`, `delete`, `probe` (a real request) |
 | `tools` | `list` (with the policy's decision), `activity`, `mcp_servers`, `connect_mcp` |
 | `knowledge` | `collections`, `create_collection`, `delete_collection`, `sources`, `source`, `ingest`, `ingest_file`, `delete`, `relabel`, `sync`, `search`, `reconcile` |
@@ -63,7 +64,7 @@ asyncio.run(main())
 
 Sessions: runs started with the same `session="…"` share a private memory scope, `session:<you>/<name>`.
 
-Agents that delegate, plans (`from hollis import Plan, PlanStep`) and the orchestration view are described in [orchestration](orchestration.md).
+Agents that delegate, plans (`from hollis import Plan, PlanStep`) and the orchestration view are described in [orchestration](orchestration.md); templates, contracts, overlays and skills in [specialized agents](specialists.md).
 
 ## Errors
 

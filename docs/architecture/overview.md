@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Status: direction-setting. Implemented so far (M1–M7): multi-agent orchestration (`hollis.platform.orchestration` and the workflow coordinator, on lineage recorded by `hollis.runtime.delegation`), the product interfaces (`hollis.platform`: workspace, principal-aware services, auth, run supervision and views; `hollis.server`: the REST API; `hollis.sdk`: the embedded and remote SDK; `hollis.cli`; the web app in `web/`, served from `hollis.server`), the runtime core (`hollis.runtime`: events, state fold, RunStore, ModelProvider, embedding, tool, artifact, memory and knowledge ports, grounding checks, identifier-aware text analysis, failure taxonomy, budgets, redaction, the multi-turn tool loop, the context engine), the memory system (`hollis.memory`: records, write policy, lifecycle, recall, memory tools, episodes), the knowledge system (`hollis.knowledge`: extraction, chunking, ingestion lifecycle, hybrid retrieval, knowledge tools), the tool system (`hollis.tools`: `@tool` definitions, registry, rule-based policy, filesystem and command tools, MCP client), the model gateway (`hollis.gateway`: catalog, routing policy, resolution), and adapters (`hollis.adapters`: in-memory and SQLite stores, scripted fake provider, credential loader, endpoint config, Anthropic Messages and OpenAI-compatible Chat Completions protocol adapters). Each section separates **decided** from **open**. Decided items link to ADRs, and open items name the milestone that resolves them.
+Status: direction-setting. Implemented so far (M1–M8): specialized agents (`hollis.specialists`: capabilities, templates, materialization and readiness, output contracts, Agent Skills; in `hollis.platform`, contract tools, run outputs and templates in a workspace), multi-agent orchestration (`hollis.platform.orchestration` and the workflow coordinator, on lineage recorded by `hollis.runtime.delegation`), the product interfaces (`hollis.platform`: workspace, principal-aware services, auth, run supervision and views; `hollis.server`: the REST API; `hollis.sdk`: the embedded and remote SDK; `hollis.cli`; the web app in `web/`, served from `hollis.server`), the runtime core (`hollis.runtime`: events, state fold, RunStore, ModelProvider, embedding, tool, artifact, memory and knowledge ports, grounding checks, identifier-aware text analysis, failure taxonomy, budgets, redaction, the multi-turn tool loop, the context engine), the memory system (`hollis.memory`: records, write policy, lifecycle, recall, memory tools, episodes), the knowledge system (`hollis.knowledge`: extraction, chunking, ingestion lifecycle, hybrid retrieval, knowledge tools), the tool system (`hollis.tools`: `@tool` definitions, registry, rule-based policy, filesystem tools with protected paths, code, data and docs tools, fixed and configured commands, read-only git, MCP client), the model gateway (`hollis.gateway`: catalog, routing policy, resolution), and adapters (`hollis.adapters`: in-memory and SQLite stores, scripted fake provider, credential loader, endpoint config, Anthropic Messages and OpenAI-compatible Chat Completions protocol adapters). Each section separates **decided** from **open**. Decided items link to ADRs, and open items name the milestone that resolves them.
 
 ## Shape
 
@@ -45,6 +45,7 @@ Packages appear only when there is code to put in them. Nothing gets created to 
 | **Platform layer** | Workspace (`hollis.toml`, `.hollis/`), the one set of services every interface calls, with authorization by principal, background run supervision, the run index, views computed from the fold, the demo model ([ADR-0026](../decisions/0026-workspace-and-platform-layer.md), [ADR-0028](../decisions/0028-authentication-and-authorization.md)). | M6 |
 | **Interfaces** | REST API (versioned, OpenAPI, problem details, SSE), the SDK (embedded or remote, async and sync), the CLI, the web app ([ADR-0027](../decisions/0027-rest-api-contract.md), [ADR-0029](../decisions/0029-web-application-and-design-system.md)). None re-derives run semantics. | M6 |
 | **Orchestration** | Delegation as durable child runs: delegate tools, permission narrowing, limits and budgets, reports with verified evidence, plans on a deterministic coordinator, the orchestration view ([ADR-0030](../decisions/0030-orchestration-on-durable-runs.md)–[0032](../decisions/0032-a2a-interoperability.md)). Built on runs, not a separate engine. | M7 |
+| **Specialization** | Capabilities and templates materialized into ordinary agents, Agent Skills, output contracts checked against the run's log, per-run policy overlays, capability tools with protected paths ([ADR-0033](../decisions/0033-specialization-templates-and-skills.md)–[0036](../decisions/0036-capability-tools-and-protected-paths.md)). Built on agents, runs and tools; nothing at run time knows templates exist. | M8 |
 
 ## Runtime and harness
 
@@ -176,6 +177,22 @@ Packages appear only when there is code to put in them. Nothing gets created to 
 - A2A server and client.
 - Cost-based budgets.
 
+## Specialization
+
+**Decided (M8).**
+- **A specialist is an ordinary agent** materialized from a versioned template and its capabilities (TOML data). It records its origin (template, version, digest, parameters, customized fields); customization edits the agent, upgrades re-materialize with a preview and keep customizations, and export writes a template file ([ADR-0033](../decisions/0033-specialization-templates-and-skills.md)).
+- **Requirements are declared and checked:** model (tool calling, context window) and workspace (files, writes, commands, git, collections, delegates); hard mismatches block creation.
+- **Output contracts** are `submit_<contract>` tools whose arguments are validated by schema and then against `RunFacts` derived from the run's log; problems go back through the normal tool loop; the accepted submission is the run's output, derived from the log and carried in delegation reports. Accepted means references verified, not judgement ([ADR-0034](../decisions/0034-output-contracts.md)).
+- **Policy overlays** recorded in `RunCreated` only tighten the workspace decision and accumulate down delegation trees ([ADR-0035](../decisions/0035-policy-overlays.md)).
+- **Capability tools and protected paths:** code, data (read-only SQLite over in-memory copies), docs, configured commands and read-only git hardened against repository configuration; file tools never touch `.git`, `.hollis` or `hollis.toml` and never write through links; process isolation, not a sandbox ([ADR-0036](../decisions/0036-capability-tools-and-protected-paths.md)).
+- **Agent Skills** are offered by name and read on demand; scripts are never executed and `allowed-tools` grants nothing.
+- **Evaluated** against generalist baselines under explicit error models ([specialist-evaluation.md](specialist-evaluation.md)).
+
+**Open.**
+- Live models as specialists (opt-in evaluation written, not run): whether procedures change real behaviour.
+- A sandbox for configured commands and skill scripts (Execution backends).
+- Contract checks for judgement (they verify references only), and template signing or provenance for shared files.
+
 ## Persistence and deployment
 
 **Decided.** Local-first (NFR-8). Storage sits behind a port.
@@ -194,7 +211,7 @@ Packages appear only when there is code to put in them. Nothing gets created to 
 
 **Direction.** The event log *is* the trajectory, so observability and evaluation build on the same record:
 - Unit and integration tests verify runtime mechanics deterministically using the fake provider.
-- Context and memory are evaluated offline against baselines ([evaluation.md](evaluation.md)); behavioral evals against real models await live access.
+- Context and memory are evaluated offline against baselines ([evaluation.md](evaluation.md)), retrieval ([rag-evaluation.md](rag-evaluation.md)), orchestration ([orchestration-evaluation.md](orchestration-evaluation.md)) and specialization ([specialist-evaluation.md](specialist-evaluation.md)) likewise; behavioral evals against real models await live access.
 - End-to-end benchmarks come later as complementary evidence.
 
 See [testing.md](testing.md).
@@ -243,5 +260,9 @@ See [testing.md](testing.md).
 | Orchestration as delegation to durable child runs; plans on a deterministic coordinator | Accepted (M7) | ADR-0030 |
 | Authority, limits and budgets for delegated runs | Accepted (M7) | ADR-0031 |
 | A2A: mapped boundary, implementation deferred | Accepted (M7) | ADR-0032 |
+| Specialization as templates over ordinary agents; Agent Skills | Accepted (M8) | ADR-0033 |
+| Output contracts checked against the run's log | Accepted (M8) | ADR-0034 |
+| Per-run policy overlays that only tighten | Accepted (M8) | ADR-0035 |
+| Capability tools, protected paths, read-only git | Accepted (M8) | ADR-0036 |
 | TLS, external identity providers, multi-process workspaces | Open | — |
 | Cloud deployment target | Open | Undecided |

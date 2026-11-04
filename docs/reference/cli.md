@@ -50,7 +50,7 @@ With `--json`, errors print `{"error": {"code": …, "detail": …, "status": �
 | `run TASK… [-a AGENT] [-s SESSION] [--approve ask\|deny\|stop] [--detach] [--timeout] [-v]` | Start a run and follow it live. `--approve ask` (default) asks at a terminal; `deny` denies held calls; `stop` leaves the run waiting. `--detach` returns at once (needs a server: an embedded run stops when the command exits). Admins can run a model directly: `--model ID --tool NAME… --instructions TEXT\|@file`. `--plan FILE` runs a fixed plan of delegations (TOML `[[steps]]` or JSON) |
 | `runs list [--phase] [--agent] [--roots] [--limit]` | Recent runs, delegated runs indented; `--roots` leaves them out |
 | `runs tree RUN` | The orchestration a run belongs to: who delegated what, outcomes, citation checks, usage, refusals, disagreements |
-| `runs show RUN` | Turns, tool calls, decisions, the answer. `RUN` may be a unique id prefix |
+| `runs show RUN` | Turns, tool calls, decisions, the checked output (for agents with a contract), the answer. `RUN` may be a unique id prefix |
 | `runs events RUN [--after N]` | The event log |
 | `runs follow RUN [--approve …]` | Follow live (JSON Lines with `--json`) |
 | `runs wait RUN [--timeout]` | Wait until it finishes or needs approval; the exit code says which |
@@ -67,7 +67,12 @@ With `--json`, errors print `{"error": {"code": …, "detail": …, "status": �
 |---|---|
 | `agents list` · `show NAME` · `delete NAME [--yes]` | |
 | `agents create NAME -m MODEL [--tool T]… [--memory SCOPE]… [--memory-read SCOPE]… [--collection C]… [--label L]… [--instructions TEXT\|@file] [--description] [--max-output-tokens N] [--record-episodes] [--delegate AGENT]… [--max-depth N] [--token-budget N]` | Admin. `--delegate` lets it hand tasks to another agent ([orchestration](../guides/orchestration.md)) |
-| `agents update NAME [same options]` | Only the options given change; each change is a new version |
+| `agents update NAME [same options]` | Only the options given change; each change is a new version. On an agent made from a template, changed template fields are marked customized |
+| `agents create NAME -m MODEL --template ID [--param NAME=VALUE]… [other options]` | Admin. An ordinary agent made from a template ([specialists](../guides/specialists.md)); the other options override the template's fields or set the agent's own (knowledge, memory, delegates). Hard requirement failures refuse with the reason |
+| `agents upgrade NAME [--reset FIELD]… [--yes]` | Admin. Preview what the template's current version changes and keeps, confirm, apply (refused if the template changed since the preview) |
+| `agents export NAME [--id ID] [--version V] [-o FILE]` | Admin. The agent as a template file to copy into another workspace's `agent-templates/` |
+| `templates list` · `templates show ID` · `templates contracts` | Templates with readiness in this workspace · a template's procedure, requirements, per-model fit and example tasks · the output contracts and what Hollis checks for each |
+| `skills list` | Agent Skills in this workspace (`skills/<name>/SKILL.md`), and folders that could not be loaded |
 | `models list` · `show ID` · `remove ID` | |
 | `models add ID --protocol P --model NAME --base-url URL [--locality] [--auth-env VAR] [--auth-header H] [--tools] [--context-window N] [--dimensions N]` | Admin. Stores the variable's name, never the key |
 | `models probe ID` | One tiny real request (may cost money) |

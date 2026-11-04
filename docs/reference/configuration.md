@@ -66,18 +66,41 @@ endpoint = { base_url = "https://api.openai.com/v1", auth = { type = "bearer", e
 ## `[tools]`
 
 ```toml
-[tools.filesystem]        # root-scoped file tools: fs_list_dir, fs_read_file, fs_write_file
+[tools.filesystem]        # root-scoped file tools: fs_*, code_*, data_*, docs_check (and apply_patch)
 root = "."                # relative to the workspace
-writable = true           # false offers only the read tools
+writable = true           # false offers only the read tools (no fs_write_file, no apply_patch)
 
 [tools]
 memory_forget = false     # offer the destructive memory_forget tool to agents
+
+[tools.git]               # read-only git_status, git_diff, git_log for the filesystem root
+binary = "/usr/bin/git"   # absolute path; the root must itself be a repository
+
+[[tools.commands]]        # a fixed command an agent may run: no shell, not a sandbox
+name = "run_tests"
+description = "Run the unit tests."
+argv = ["/usr/bin/python3", "-m", "pytest", "-q", "{path}"]
+parameters = { path = { description = "Test path", default = "tests", pattern = "[A-Za-z0-9_./-]+" } }
+effect = "read_only"      # read_only | mutating (default) | destructive
+idempotent = false
+timeout_s = 120
+cwd = "."                 # relative to the workspace
+env = { PYTHONDONTWRITEBYTECODE = "1" }   # set for the command (PATH and LANG are fixed)
+inherit_env = []          # names of Hollis's own variables to pass on (they can appear in output)
 
 [[tools.mcp]]             # an MCP server, connected when a run needs it
 name = "files"
 transport = { type = "stdio", command = "/usr/local/bin/mcp-files", args = ["--root", "."] }
 tools = { read = { effect = "read_only" }, write = { effect = "mutating" } }   # the allowlist
 ```
+
+What the built-in capability tools do and refuse ([ADR-0036](../decisions/0036-capability-tools-and-protected-paths.md)):
+- **File, code, data and docs tools** never read or write `.git` or `.hollis` (any letter case, also through links), and never write `hollis.toml` at any depth, the skills directory or the templates directory. Writes never pass through a symbolic link and may not contain `..`.
+- **`data_query`** runs one SELECT over in-memory copies of the named CSV/TSV/JSON/JSONL files: no writes, PRAGMA, ATTACH or extensions; values up to 1 MB; 5 s per query; 200 rows shown.
+- **Configured commands:** `{name}` argv elements are filled with whole parameter values, which never start with `-` and must match the whole `pattern`. A command may not take a built-in tool's name or a `delegate_`, `submit_`, `mcp_` or `skill_` prefix.
+- **Git tools** refuse to run in a repository whose configuration (includes followed) defines filter drivers or `core.worktree`, and never run hooks, fsmonitor, external diff or textconv drivers. They read the repository's own configuration: use them for repositories whose `.git/config` you trust.
+
+Commands and git run as the Hollis user, with its access: isolation `process`, not a sandbox.
 
 Only allowlisted MCP tools are offered. Each declares its effect (`read_only`, `mutating`, `destructive`; default `destructive`, the fail-safe), and optionally `idempotent`, `timeout_s` and a definition `pin`. Hollis never takes these from the server's own annotations. The other transport is `{ type = "streamable_http", endpoint = { base_url = "…" } }`. Built-in artifact, knowledge and memory tools are always present. See [ADR-0017](../decisions/0017-mcp-integration.md).
 
@@ -110,6 +133,15 @@ Limits on agents delegating to agents ([ADR-0031](../decisions/0031-orchestratio
 | `max_runs` | `24` | Runs per orchestration, the root included |
 | `token_budget` | none | Provider-reported tokens for the whole orchestration. Delegated work stops at 75% of it; calls in flight reserve their output budget and estimated input |
 | `wait_s` | `900` | How long a run waits for one delegate (at most 3500; also capped by its deadline) |
+
+## `[specialists]`
+
+Where a workspace keeps Agent Skills and its own agent templates ([ADR-0033](../decisions/0033-specialization-templates-and-skills.md), [guide](../guides/specialists.md)). Both are relative to the workspace; file tools never write them.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `skills_dir` | `"skills"` | `<name>/SKILL.md` folders offered to agents by name and read with `skill_read`; scripts are never executed |
+| `templates_dir` | `"agent-templates"` | `*.toml` templates (for example exported with `hollis agents export`); first-party ids cannot be reused |
 
 ## `[knowledge]`
 

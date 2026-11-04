@@ -48,3 +48,15 @@ def test_orchestration(tmp_path: Path) -> None:
     assert "make ship" in out
     assert "41000 euros" in out
     assert "plan: Plan finished: 3 of 3 steps completed." in out
+
+
+def test_specialists(tmp_path: Path) -> None:
+    out = run("specialists.py", str(tmp_path))
+    assert "template software-engineer: ready" in out
+    assert "analyst output: accepted" in out
+    assert "'value': 3" in out
+    assert "reviewer policy: ['read-only']" in out
+    assert "review output: accepted, scope ['pagination.py']" in out
+    assert "customized: ('description',)" in out
+    assert "up to date with code-reviewer 1.0.0: True" in out
+    assert "workspace templates: ['pagination-review']" in out
