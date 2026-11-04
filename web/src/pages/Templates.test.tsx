@@ -95,7 +95,7 @@ describe("AgentEdit with a template-made agent", () => {
   it("keeps the contract, overlay and skills when saved, and offers the upgrade", async () => {
     const agent = {
       name: "reviewer", description: "Mine.", instructions: "Review.", model: "demo", tools: ["code_read"],
-      memory: null, knowledge: null, budget: null, context: {}, record_episodes: false, delegates: [], delegation: null,
+      memory: null, knowledge: null, budget: { max_output_tokens: 4096, max_model_turns: 40 }, context: {}, record_episodes: false, delegates: [], delegation: null,
       policy: detail.policy, contract: "code-review", skills: ["ship-it"], created_at: "2026-11-01T10:00:00Z",
       updated_at: "2026-11-01T10:00:00Z", created_by: "admin", version: 2,
       origin: { template: "code-reviewer", version: "1.0.0", digest: "sha256:abc", parameters: { focus: "x" }, overrides: ["description"] },
@@ -127,6 +127,7 @@ describe("AgentEdit with a template-made agent", () => {
     expect(saved.contract).toBe("code-review");
     expect(saved.skills).toEqual(["ship-it"]);
     expect(saved.policy).toEqual(detail.policy);
+    expect(saved.budget).toEqual({ max_output_tokens: 4096, max_model_turns: 40 });
     fireEvent.click(screen.getByRole("button", { name: "Upgrade to 1.1.0" }));
     await waitFor(() => expect(calls.some((c) => c.url.endsWith("/upgrade") && c.method === "POST")).toBe(true));
     expect(calls.find((c) => c.method === "POST")?.body).toEqual({ digest: "sha256:def", reset: [] });

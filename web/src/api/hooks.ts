@@ -270,7 +270,8 @@ export type AgentDraft = {
   tools: string[];
   memory: { read: string[]; write: string[] } | null;
   knowledge: { collections: string[]; labels: string[] } | null;
-  budget: { max_output_tokens: number } | null;
+  /** The whole budget is kept; the form edits only the output budget. */
+  budget: (Record<string, unknown> & { max_output_tokens: number }) | null;
   record_episodes: boolean;
   delegates: string[];
   /** Narrows the workspace's delegation limits (unset fields inherit); null keeps them. */

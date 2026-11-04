@@ -67,7 +67,7 @@ function draftOf(agent: Agent): AgentDraft {
     knowledge: agent.knowledge
       ? { collections: [...agent.knowledge.collections], labels: [...agent.knowledge.labels] }
       : null,
-    budget: agent.budget ? { max_output_tokens: agent.budget.max_output_tokens } : null,
+    budget: agent.budget ? { ...agent.budget } : null,
     record_episodes: agent.record_episodes,
     delegates: [...agent.delegates],
     delegation: agent.delegation ? { ...agent.delegation } : null,
@@ -331,7 +331,12 @@ function AgentForm({ agent, readOnly }: { agent: Agent | undefined; readOnly: bo
                     min={1}
                     value={draft.budget?.max_output_tokens ?? ""}
                     onChange={(event) =>
-                      set("budget", event.target.value ? { max_output_tokens: Number(event.target.value) } : null)
+                      set(
+                        "budget",
+                        event.target.value
+                          ? { ...(draft.budget ?? {}), max_output_tokens: Number(event.target.value) }
+                          : null,
+                      )
                     }
                   />
                 )}
